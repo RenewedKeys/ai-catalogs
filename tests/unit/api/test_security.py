@@ -24,6 +24,7 @@ SENTINELS = {
     "TMDB_READ_ACCESS_TOKEN": "SENTINEL-tmdb-0123456789",
     "RPDB_API_KEY": "SENTINEL-rpdb-0123456789",
     "ENCRYPTION_KEY": "SENTINEL-encryption-0123456789",
+    "ADDON_ACCESS_TOKEN": "SENTINELaddontoken0123456789",
 }
 # Credentials a user typed into the form themselves; they live inside the encrypted config.
 USER_SECRETS = {
@@ -68,6 +69,8 @@ def _get_paths(app, blob: str) -> list[str]:
         "catalog_id": "trending_movie",
         "skip": "0",
         "search": "heist",
+        "token": SENTINELS["ADDON_ACCESS_TOKEN"],
+        "extra": "skip=0",
     }
     paths = []
 
@@ -90,6 +93,16 @@ def _get_paths(app, blob: str) -> list[str]:
     return paths
 
 
+def _load_fixture_catalog():
+    """Give the curated routes something to serve, so the sweep reads real responses."""
+    from app.store.catalogs import SnapshotItem, accept_definition, publish_snapshot
+    from app.store.db import session, transaction
+
+    with session() as conn, transaction(conn):
+        rev = accept_definition(conn, "trending_movie", "Sweep", {"k": 1})
+        publish_snapshot(conn, "trending_movie", [SnapshotItem("tt0000001", "A Film", 1999, 1)], config_rev=rev)
+
+
 def _assert_clean(response, secrets, where):
     haystack = response.text + "\n" + "\n".join(f"{k}: {v}" for k, v in response.headers.items())
     for secret in secrets:
@@ -104,18 +117,23 @@ def test_no_get_route_reveals_a_secret(enable_legacy, secrets, monkeypatch):
     monkeypatch.setattr("app.api.stremio._cached_catalog", fake_catalog)
     monkeypatch.setattr("app.api.stremio._process_catalog_request", AsyncMock(return_value={"metas": []}))
 
+    _load_fixture_catalog()
     app = create_app(enable_legacy=enable_legacy)
     client = TestClient(app, follow_redirects=False)
     blob = _user_blob()
+    token = SENTINELS["ADDON_ACCESS_TOKEN"]
     paths = _get_paths(app, blob) + ["/", "/configure", f"/configure?config={blob}", "/does-not-exist"]
     assert "/healthz" in paths
+    assert f"/c/{token}/manifest.json" in paths
+    assert client.get(f"/c/{token}/catalog/movie/trending_movie.json").json()["metas"][0]["id"] == "tt0000001"
     if enable_legacy:
         assert f"/config/{blob}/preview" in paths
         assert f"/config/{blob}/manifest.json" in paths
 
     for path in paths:
         response = client.get(path, headers={"Origin": "https://example.org"})
-        _assert_clean(response, secrets, path.replace(blob, "<blob>"))
+        # The token is in the request path; it must not come back in the response.
+        _assert_clean(response, secrets, path.replace(blob, "<blob>").replace(token, "<token>"))
 
 
 def test_configure_page_offers_to_keep_stored_keys_without_showing_them(secrets):

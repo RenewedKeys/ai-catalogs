@@ -13,6 +13,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, project_root)
 
 from app.models.config import Config
+from app.core.config import settings as _settings
 from app.models.movie import StremioMeta, MovieSuggestions, TVSeriesSuggestions, MovieSuggestion, TVSeriesSuggestion
 
 
@@ -172,3 +173,11 @@ def sample_tmdb_tv() -> Dict[str, Any]:
             ],
         },
     }
+
+
+@pytest.fixture(autouse=True)
+def _temporary_database(tmp_path, monkeypatch):
+    """Every test gets its own empty SQLite file; nothing touches /data."""
+    path = str(tmp_path / "test.sqlite")
+    monkeypatch.setattr(_settings, "DATABASE_PATH", path)
+    return path
