@@ -51,18 +51,31 @@ def job_and_run(job_id):
         return dict(job), dict(run) if run else None
 
 
+async def until_running(timeout=10.0):
+    """Wait until the claimed run is in progress (fixed sleeps flake on a loaded CI runner)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        with db.session() as conn:
+            row = conn.execute("SELECT seed FROM runs WHERE status = 'running'").fetchone()
+        if row is not None and row["seed"]:
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("run did not start")
+
+
 def slow(films, delay):
     return SlowServices(ScriptedLLM(sorted(films), films), UniverseTMDB(films), delay)
 
 
 async def test_run_longer_than_the_lease_ttl_keeps_the_lease_and_commits(films):
     job_id = enqueue()
-    runner = Runner(owner="a", services=slow(films, 0.25), lease_ttl_ms=300, heartbeat_s=0.05)
+    runner = Runner(owner="a", services=slow(films, 0.8), lease_ttl_ms=1000, heartbeat_s=0.1)
     assert await runner.start()
     task = asyncio.create_task(runner.run_next())
-    await asyncio.sleep(0.6)  # two TTLs into a ~0.75 s run
+    await asyncio.sleep(2.0)  # two TTLs into a ~2.4 s run
     with db.session() as conn:
-        assert acquire_lease(conn, "b", 300) is None  # a second worker cannot take over
+        assert acquire_lease(conn, "b", 1000) is None  # a second worker cannot take over
     report = await task
     await runner.stop()
     assert report.outcome == "published"
@@ -87,7 +100,7 @@ async def test_signal_cancellation_puts_the_job_back_without_penalty(films):
     runner = Runner(owner="a", services=slow(films, 5), heartbeat_s=0.05)
     assert await runner.start()
     task = asyncio.create_task(runner.run_next())
-    await asyncio.sleep(0.2)
+    await until_running()
     runner.cancel_current("signal")
     report = await task
     await runner.stop()
@@ -102,10 +115,10 @@ async def test_signal_cancellation_puts_the_job_back_without_penalty(films):
 
 async def test_lost_lease_cancels_the_run_and_writes_nothing(films):
     job_id = enqueue()
-    runner = Runner(owner="a", services=slow(films, 5), lease_ttl_ms=200, heartbeat_s=0.05)
+    runner = Runner(owner="a", services=slow(films, 5), lease_ttl_ms=2000, heartbeat_s=0.05)
     assert await runner.start()
     task = asyncio.create_task(runner.run_next())
-    await asyncio.sleep(0.15)
+    await until_running()
     with db.session() as conn, db.transaction(conn):  # another process takes over the lease
         conn.execute(
             "UPDATE lease SET owner = 'b', generation = generation + 1, expires_at = ?", (db.now_ms() + 60_000,)
@@ -140,7 +153,7 @@ async def test_start_recovers_abandoned_jobs(films):
 
 async def test_acquire_gives_up_when_the_holder_is_alive(films):
     with db.session() as conn:
-        holder = acquire_lease(conn, "worker", 400)
+        holder = acquire_lease(conn, "worker", 60_000)
     runner = Runner(owner="cli")
 
     async def renew():
@@ -149,7 +162,7 @@ async def test_acquire_gives_up_when_the_holder_is_alive(films):
         for _ in range(10):
             await asyncio.sleep(0.05)
             with db.session() as conn:
-                renew_lease(conn, holder, 400)
+                renew_lease(conn, holder, 60_000)
 
     renewer = asyncio.create_task(renew())
     assert not await runner.acquire(wait_s=2, poll_s=0.02)
@@ -183,5 +196,51 @@ async def test_history_clear_during_a_run_supersedes_it(films):
     assert report.outcome == "superseded"
     with db.session() as conn:
         assert active_metas(conn, CID) is None
+        states = [tuple(r) for r in conn.execute("SELECT id, state FROM jobs ORDER BY id")]
+    assert states == [(job_id, "done"), (job_id + 1, "pending")]
+
+
+async def test_heartbeats_racing_the_commit_never_report_a_lost_lease(films):
+    services = FakeServices(ScriptedLLM(sorted(films), films), UniverseTMDB(films))
+    with db.session() as conn, db.transaction(conn):
+        accept_definition(conn, CID, "Example", definition(target_count=5, overgenerate_factor=1.0))
+    runner = Runner(owner="a", services=services, heartbeat_s=0.001)
+    assert await runner.start()
+    for _ in range(20):
+        enqueue(kind="dry_run")
+        report = await runner.run_next()
+        assert report.outcome == "dry_run_ok"
+        assert not runner.lost and not runner._heartbeat_task.done()
+    await runner.stop()
+    with db.session() as conn:
+        assert conn.execute("SELECT expires_at FROM lease").fetchone()[0] == 0
+
+
+async def test_rollback_during_a_run_supersedes_it(films):
+    from app.store.catalogs import SnapshotItem, publish_snapshot
+    from app.store.maintenance import rollback
+
+    with db.session() as conn, db.transaction(conn):
+        rev = conn.execute("SELECT config_rev FROM catalog_defs").fetchone()[0]
+        first = publish_snapshot(conn, CID, [SnapshotItem("tt1", "Old A", 1990, 1)], config_rev=rev)
+        publish_snapshot(conn, CID, [SnapshotItem("tt2", "Old B", 1991, 2)], config_rev=rev)
+    job_id = enqueue()
+    services = FakeServices(ScriptedLLM(sorted(films), films), UniverseTMDB(films))
+    original = services.llm.handle
+
+    def rollback_then_answer(request):
+        if services.llm.calls == 0:
+            with db.session() as conn:
+                rollback(conn, CID, first.snapshot_id)
+        return original(request)
+
+    services.llm.handle = rollback_then_answer
+    runner = Runner(owner="a", services=services)
+    assert await runner.start()
+    report = await runner.run_next()
+    await runner.stop()
+    assert report.outcome == "superseded"
+    with db.session() as conn:
+        assert [m["id"] for m in active_metas(conn, CID)] == ["tt1"]  # the rollback stands
         states = [tuple(r) for r in conn.execute("SELECT id, state FROM jobs ORDER BY id")]
     assert states == [(job_id, "done"), (job_id + 1, "pending")]

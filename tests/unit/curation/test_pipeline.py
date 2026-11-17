@@ -236,7 +236,7 @@ async def test_director_cap_holds():
 
 async def test_gate_thresholds_come_from_the_definition():
     films = make_universe(400, vote_average=lambda n: 5.0 if n % 2 else 8.0)
-    put_definition(definition(min_vote_average=6.5))
+    put_definition(definition(min_vote_average=6.0))
     report = await run_once(services_for(films))
     assert report.outcome == "published"
     assert all((int(i[2:]) - 1_000_000) % 2 == 0 for i in active_ids())
@@ -381,3 +381,49 @@ def test_selection_soft_category_quota_ranks_but_never_blocks():
 
 def test_partial_quotas_scale_down():
     assert scaled_quotas(Limits(decade_min={1980: 20, 1990: 5}), 60, 100) == {1980: 12, 1990: 3}
+
+
+# --------------------------------------------------------------------------- dedupe and ordering
+
+
+async def test_adjacent_year_guesses_collapse_on_the_resolved_id():
+    import httpx2
+
+    from tests.unit.curation.llm_fake import completion
+
+    films = make_universe(30)
+    put_definition(definition(target_count=20, overgenerate_factor=1.0))
+    services = services_for(films)
+    rows = [{"title": f"Film {n}", "year": films[n].year, "category": "alpha"} for n in range(1, 21)]
+    rows += [{"title": "Film 5", "year": films[5].year + 1, "category": "alpha"}]  # same film, wrong year
+
+    def reply(request):
+        services.llm.calls += 1
+        return httpx2.Response(200, json=completion(json.dumps({"movies": rows})))
+
+    services.llm.handle = reply
+    report = await run_once(services)
+    assert report.outcome == "published"
+    published = active_ids()
+    assert len(published) == 20 and len(set(published)) == 20
+    assert json.loads(last_run()["stage_counts_json"])["duplicate_id"] == 1
+
+
+async def test_relax_counts_a_title_by_its_most_recent_activation():
+    from app.store.catalogs import SnapshotItem, publish_snapshot
+
+    films = make_universe(200)
+    rev = put_definition(definition(history_mode="relax", target_count=50))
+
+    def show(numbers):
+        items = [SnapshotItem(films[n].imdb_id, films[n].title, films[n].year, n) for n in numbers]
+        with db.session() as conn, db.transaction(conn):
+            publish_snapshot(conn, CID, items, config_rev=rev)
+
+    show(range(1, 101))  # older activation: films 1..100
+    show(range(51, 151))  # newer activation: films 51..150 (51..100 shown again)
+    report = await run_once(services_for(films, sequence=list(range(1, 151))))
+    assert report.outcome == "published"
+    # Dropping the older activation frees 1..50 only: 51..100 are still in the newer one.
+    assert {int(i[2:]) - 1_000_000 for i in active_ids()} == set(range(1, 51))
+    assert last_run()["relaxed_window"] == 1

@@ -43,13 +43,13 @@ def tmdb():
 
 
 async def test_apply_accepts_valid_definitions_and_is_idempotent(tmp_path, tmdb):
-    write(tmp_path, "first_list.yaml", PROMPT + "target_count: 50\nmin_vote_average: 6.5\n")
+    write(tmp_path, "first_list.yaml", PROMPT + "target_count: 50\nmin_vote_average: 5.5\n")
     write(tmp_path, "second.yml", PROMPT + "enabled: false\nname: Second\n")
     report = await apply_dir(tmp_path, tmdb_client_factory=tmdb.client)
     assert report.ok and [r.status for r in report.files] == ["accepted", "accepted"]
     first = row("first_list")
     assert first["state"] == "enabled" and first["name"] == "First List" and first["source"] == "file"
-    assert json.loads(first["definition_json"])["min_vote_average"] == 6.5
+    assert json.loads(first["definition_json"])["min_vote_average"] == 5.5
     assert row("second")["state"] == "disabled" and row("second")["name"] == "Second"
     epoch = first["epoch"]
     report = await apply_dir(tmp_path, tmdb_client_factory=tmdb.client)

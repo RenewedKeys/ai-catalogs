@@ -36,19 +36,19 @@ franchise_denylist:
   title_patterns: []           # regular expressions on the title
 
 # Hard limits (gatekeeper), all optional:
-# min_vote_average: 6.5        # TMDB rating floor (0-10)
-# min_vote_count: 500
-# year_min: 1980
-# year_max: 2025
-# min_runtime: 80              # minutes; a film with no runtime is rejected when set
-# languages: [en]              # original language allow-list (ISO 639-1)
-# excluded_genre_ids: [16]     # TMDB genre ids
+# min_vote_average: 7.2        # TMDB rating floor (0-10)
+# min_vote_count: 300
+# year_min: 1965
+# year_max: 2015
+# min_runtime: 75              # minutes; a film with no runtime is rejected when set
+# languages: [fr, it]          # original language allow-list (ISO 639-1)
+# excluded_genre_ids: [99]     # TMDB genre ids
 
 # Selection limits, all optional:
-# max_per_collection: 1        # films per TMDB collection (franchise)
-# director_cap: 2              # films per director
-# decade_min: {1980: 10, 1990: 10}   # hard: a list that misses it is not published
-# category_min: {alpha: 10}          # soft: steers selection and top-ups only
+# max_per_collection: 2        # films per TMDB collection (franchise)
+# director_cap: 3              # films per director
+# decade_min: {1970: 15, 2000: 5}    # hard: a list that misses it is not published
+# category_min: {alpha: 12}          # soft: steers selection and top-ups only
 
 # Run shape (defaults shown):
 target_count: 100              # list size, at most 250
@@ -62,6 +62,6 @@ max_runs_per_day: 4
 
 # Model (defaults: DEFAULT_MODEL from the environment; temperature not sent):
 # model: google/gemini-3.5-flash-lite
-# temperature: 0.9
+# temperature: 0.7
 # max_tokens: 8000
 # timeout_s: 120

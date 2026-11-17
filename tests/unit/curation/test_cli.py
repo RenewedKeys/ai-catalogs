@@ -23,7 +23,7 @@ from tests.unit.curation.pipeline_fakes import FakeServices, ScriptedLLM, Univer
 CHILD = os.path.join(os.path.dirname(__file__), "cli_child.py")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 CID = "example"
-TTL_MS = 600
+TTL_MS = 1500
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="needs SIGKILL")
 
@@ -49,7 +49,7 @@ def child(path, delay, **popen):
     env = {**os.environ, "TEST_DATABASE_PATH": path, "DATABASE_PATH": path, "PYTHONPATH": ROOT}
     env.pop("OPENAI_API_KEY", None)
     return subprocess.Popen(
-        [sys.executable, CHILD, CID, str(delay), str(TTL_MS), "0.1"],
+        [sys.executable, CHILD, CID, str(delay), str(TTL_MS), "0.2"],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -80,7 +80,7 @@ def run_state(path):
 @posix_only
 def test_standalone_cli_run_longer_than_the_lease_ttl_keeps_the_lease_and_commits(old_snapshot):
     path = old_snapshot
-    proc = child(path, delay=0.5)  # 3 calls: ~1.5 s, more than two TTLs
+    proc = child(path, delay=1.2)  # 3 calls: ~3.6 s, more than two TTLs
     wait_for(lambda: run_state(path) == "running", proc)
     time.sleep(TTL_MS / 1000 * 1.5)
     with db.session(path) as conn:

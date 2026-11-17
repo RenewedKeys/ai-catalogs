@@ -29,6 +29,7 @@ import os
 import socket
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
@@ -118,6 +119,12 @@ class Runner:
     _task: Optional[asyncio.Task] = field(default=None, init=False)
     _cancel_reason: Optional[str] = field(default=None, init=False)
     _heartbeat_task: Optional[asyncio.Task] = field(default=None, init=False)
+    # Serialises heartbeats with the job hand-over: a beat must never touch a job that the
+    # runner is finalizing (it would see a job that is no longer 'running' and report a
+    # false lost lease). The heartbeat also has its own thread, so a busy default pool
+    # (TMDB cache lookups) cannot delay renewal.
+    _beat_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    _beat_executor: Optional[ThreadPoolExecutor] = field(default=None, init=False)
 
     # ---------------------------------------------------------------- db helpers
 
@@ -153,6 +160,9 @@ class Runner:
                 return True
             now = await self._db(read)
             if first is not None and now is not None and now != first:
+                if now[2] < db.now_ms():
+                    first = now  # released or expired in between: try again at once
+                    continue
                 return False  # renewed or taken over: someone alive holds it
             if time.monotonic() >= deadline:
                 return False
@@ -162,6 +172,7 @@ class Runner:
         """Acquire the lease, start the heartbeat task and recover abandoned jobs."""
         if not await self.acquire(wait_s):
             return False
+        self._beat_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lease-heartbeat")
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(), name="lease-heartbeat")
         recovered = await self._db(recover_abandoned, self.lease)
         if recovered:
@@ -177,6 +188,9 @@ class Runner:
             except (asyncio.CancelledError, Exception):
                 pass
             self._heartbeat_task = None
+        if self._beat_executor is not None:
+            self._beat_executor.shutdown(wait=False)
+            self._beat_executor = None
         if self.lease is not None and not self.lost:
             try:
                 await self._db(release_lease, self.lease)
@@ -184,12 +198,22 @@ class Runner:
                 logger.warning("Could not release the lease: %s", describe_error(e))
         self.lease = None
 
+    async def _beat(self) -> None:
+        lease, claim, ttl = self.lease, self._claim, self.lease_ttl_ms
+
+        def call():
+            with db.session(self.db_path) as conn:
+                heartbeat(conn, lease, claim, ttl)
+
+        await asyncio.get_running_loop().run_in_executor(self._beat_executor, call)
+
     async def _heartbeat_loop(self) -> None:
         last_ok = time.monotonic()
         while True:
             await asyncio.sleep(self.heartbeat_s)
             try:
-                await self._db(heartbeat, self.lease, self._claim, self.lease_ttl_ms)
+                async with self._beat_lock:
+                    await self._beat()
                 last_ok = time.monotonic()
             except LostLease:
                 logger.error("Lease ownership lost; cancelling the current run")
@@ -225,7 +249,8 @@ class Runner:
 
     async def run_claim(self, claim: Claim) -> RunReport:
         """Run one claimed job to a terminal, fenced outcome."""
-        self._claim = claim
+        async with self._beat_lock:
+            self._claim = claim
         self._cancel_reason = None
         self._usage: dict[str, int] = {}
         self._task = asyncio.create_task(self._execute(claim), name=f"run-{claim.run_id}")
@@ -234,6 +259,10 @@ class Runner:
             if not done:
                 self.cancel_current("timeout")
                 await asyncio.wait({self._task})
+            # Hand the job over from the heartbeat to the terminal write: from here on the
+            # beats renew the lease only.
+            async with self._beat_lock:
+                self._claim = None
             return await self._finalize(claim, self._task)
         finally:
             self._claim = None
