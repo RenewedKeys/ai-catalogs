@@ -13,7 +13,7 @@ enabled: true                  # false keeps the definition but hides the catalo
 # Jinja2 template. Variables include today, weekday, month_name, year, seed, target_count,
 # request_count, focus, categories, anchors and limits (e.g. {{ limits.year_min }}). Blocks
 # you do not place yourself (constraints, unmet quotas, already-suggested titles, recent
-# history) are appended after the template.
+# history, watched films) are appended after the template.
 prompt: |
   Suggest {{ request_count }} feature films for a catalog called "Example Catalog".
   Today is {{ weekday }}, {{ today }}. Vary the picks using this seed: {{ seed }}.
@@ -59,6 +59,14 @@ on_shortfall: fail             # publish_partial: publish at least min_accept it
 # min_accept: 80
 max_model_calls_per_run: 8
 max_runs_per_day: 4
+
+# Films you have already watched (optional, off by default). Needs MDBLIST_API_KEY in the
+# server's .env; the watched history comes from your MDBList account (which syncs it from
+# Trakt, Plex and others), is cached for 6 h and is matched on TMDB/IMDb ids. If MDBList
+# cannot be reached the run fails and retries later; the previous list stays up.
+# exclude_watched: true
+# watched_prompt_limit: 50     # most recently watched titles named in the prompt; 0 = none.
+#                              # These titles are sent to the model provider.
 
 # Schedule (optional; without one the catalog only refreshes when asked: CLI or /ops).
 # Five-field cron on the catalog's local wall clock. Refresh a few hours before viewing time:

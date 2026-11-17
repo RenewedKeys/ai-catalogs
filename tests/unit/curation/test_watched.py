@@ -266,7 +266,9 @@ async def test_mdblist_5xx_is_transient_and_keeps_the_previous_snapshot(monkeypa
         assert MDBLIST_KEY_SENTINEL not in text and BODY_SENTINEL not in text
 
 
-@pytest.mark.parametrize("status, category, transient", [(401, "mdblist_auth", False), (429, "mdblist_rate_limit", True)])
+@pytest.mark.parametrize(
+    "status, category, transient", [(401, "mdblist_auth", False), (429, "mdblist_rate_limit", True)]
+)
 async def test_auth_and_rate_limit_errors(status, category, transient, caplog):
     caplog.set_level(logging.DEBUG)
     put_definition(definition(exclude_watched=True))
@@ -331,9 +333,7 @@ def test_watched_block_is_cut_before_the_history_block():
     defn = definition(max_prompt_chars=1000)
     history = [(f"Film {i}", 2000) for i in range(1, 30)]
     watched = [(f"Film {i}", 1990) for i in range(100, 150)]
-    rendered = render_prompt(
-        defn, today=date(2026, 1, 1), seed="0" * 16, history=history, watched=watched
-    )
+    rendered = render_prompt(defn, today=date(2026, 1, 1), seed="0" * 16, history=history, watched=watched)
     assert len(rendered.text) <= 1000
     assert rendered.watched_lines_used < rendered.watched_lines_total
     assert rendered.watched_lines_used == 0 or rendered.exclusion_lines_used == rendered.exclusion_lines_total

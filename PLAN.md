@@ -355,7 +355,8 @@ The YAML also carries: `model`, `temperature`, `max_tokens`, `timeout_s`,
 `target_count` (default 100), `overgenerate_factor` (default 1.6), `schedule` (cron +
 timezone), `history_window_runs` (default 7), `history_mode` (default `strict`),
 `on_shortfall` (default `fail`), `max_model_calls_per_run` (default 8),
-`max_runs_per_day` (default 4), `weekday_focus`. Today's date is injected into the
+`max_runs_per_day` (default 4), `weekday_focus`, `exclude_watched` (default false) and
+`watched_prompt_limit` (default 50; section 20). Today's date is injected into the
 template, so prompts need no search grounding for it.
 
 ## 7. LLM layer and spend control (`app/curation/llm.py`, `app/curation/budget.py`)
@@ -382,7 +383,7 @@ template, so prompts need no search grounding for it.
   40) and `max_runs_per_day` per catalog. Reservations are rows in `llm_ledger` written
   before the call, so limits hold across restarts and across web/worker/CLI.
 - **Dry run** = full pipeline, no snapshot/history/schedule mutation; it still writes a
-  `runs` row (`dry_run=1`) and ledger rows.
+  `runs` row (`dry_run=1`) and ledger rows (and refreshes `tmdb_cache` / `watched_cache`).
 - Run wall-clock cap (default 20 min) enforced by the worker.
 - `scripts/probe_model.py`: checks that the chosen model accepts the configured
   temperature with strict JSON schema, with and without `:online`, and reports tokens.
@@ -495,8 +496,10 @@ Secrets and tokens:
   `/c/` and `/config/` segments, and the README includes the reverse-proxy log-format
   snippet (Caddy/nginx) that drops the path segment.
 - `OPS_TOKEN` is header-only, never in URLs.
-- Outbound requests go only to the configured OpenRouter base URL and
-  `api.themoviedb.org`; `OPENAI_BASE_URL` is env-only (not editable through any route).
+- `MDBLIST_API_KEY` (section 20) likewise: env only. MDBList takes it as a query
+  parameter, so request URLs are never logged.
+- Outbound requests go only to the configured OpenRouter base URL,
+  `api.themoviedb.org` and (only for `exclude_watched` catalogs) `api.mdblist.com`; `OPENAI_BASE_URL` is env-only (not editable through any route).
 
 ## 11. Scheduler (`app/worker.py`)
 
@@ -736,3 +739,48 @@ Implemented on branch `milestone-6-worker`:
   container on the same volume).
 - Next (milestone 7): tune the operator's first catalogs over a week of real runs and rerun
   the integration matrix.
+
+## 20. Excluding watched films (MDBList)
+
+Owner request: besides the addon's own history window, never list a film the owner has
+already watched. The watched history lives in the owner's MDBList account (MDBList syncs it
+from Trakt, Plex, Jellyfin and its own check-ins).
+
+- **Opt-in per catalog**: `exclude_watched: true` (strict boolean, default false) and
+  `watched_prompt_limit` (0-500, default 50). Validation does not depend on the environment.
+- **Key**: `MDBLIST_API_KEY`, env / `.env` only; never in YAML, SQLite, logs or responses.
+  A catalog with `exclude_watched: true` and no key fails its run with `config` ("exclude_watched
+  is set but MDBLIST_API_KEY is not") before any model call.
+- **Source** (`app/curation/watched.py`): `GET https://api.mdblist.com/sync/watched?
+  mediatype=movie&limit=1000&apikey=...`, full payload (not `extended=ids_only`, which drops the
+  IMDb id and title), cursor pagination via `pagination.next_cursor` (at most 200 pages; a
+  repeated cursor is an error). Rows `movies[].movie.ids.{tmdb, imdb}`; rows with neither id
+  are skipped. A 200 without a `movies` list is `mdblist_schema`, never "nothing watched". Free
+  accounts allow 1,000 requests per day; a run needs `ceil(watched / 1000)` requests at most
+  every 6 h. The endpoint is not documented as supporter-only.
+- **Cache**: migration 4, table `watched_cache(key, fetched_at, item_count, payload_json)`, one
+  row (`mdblist:movies`) shared by every catalog, written in one transaction only after a
+  complete fetch, read while younger than 6 h. No key material in it. An expired cache whose
+  refresh fails fails the run; there is no stale fallback.
+- **Pipeline**: loaded once in setup, before generation. Stage 5-8: a resolved `tmdb_id` in the
+  set is rejected as `watched` before its details lookup; the IMDb id from the details is
+  checked too. Watched films are rejects, never "held", so `history_mode: relax` cannot
+  re-admit them. `assert_publishable` re-checks both ids (and fails if the option is on but the
+  set is missing). `stage_counts_json.watched_known` records the set size.
+- **Prompt**: block `watched` ("ALREADY WATCHED BY THE VIEWER (do not include):", lines of 12),
+  the `watched_prompt_limit` most recently watched titles; appended after the template unless
+  the template places `{{ watched }}`; cut first when the prompt is over its cap. These titles
+  go to the model provider; `watched_prompt_limit: 0` keeps them local.
+- **Errors**: `mdblist_auth` (401/403, no retry), `mdblist_rate_limit` (429; a `Retry-After`
+  above 30 s, i.e. the daily limit, is not waited out), `mdblist_http_5xx`, `mdblist_timeout`,
+  `mdblist_transport` (three attempts, then a transient run failure: the job is retried with
+  backoff and the previous snapshot stays active), `mdblist_http_4xx`, `mdblist_schema`. Only
+  categories and HTTP statuses are logged or stored (`describe_error`).
+- **Tests** (`tests/unit/curation/test_watched.py`, fake MDBList transport only): watched films
+  never published, relax does not re-admit them, details are skipped for TMDB-id matches,
+  cache reused within the TTL and refreshed after, a failed page caches nothing, missing key ->
+  `config`, 5xx -> transient with the previous snapshot kept, 401/429 handling, schema errors,
+  key and body sentinels absent from logs, the runs row and the report, definition validation.
+- **Not verified live**: the response shape is from MDBList's published OpenAPI schema; no
+  request was made with a real key.
+
