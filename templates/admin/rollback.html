@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Roll back · {{ catalog.name }}{% endblock %}
+{% block content %}
+<p><a href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}">&larr; {{ catalog.name }}</a></p>
+<h1>Roll back to list {{ snap.id }}?</h1>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<p>List {{ snap.id }}{% if snap.created_at %} (published {{ snap.created_at }}, {{ snap.items }} items){% endif %} becomes the served list again.
+Every list published after it is revoked: its titles can be picked again, and it can no longer be a rollback target.
+A refresh that is running now will not publish.</p>
+<form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/rollback/{{ snap.id }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit" class="danger">Roll back</button>
+  <a href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}">Cancel</a>
+</form>
+{% endblock %}

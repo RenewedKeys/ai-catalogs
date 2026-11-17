@@ -790,3 +790,137 @@ from Trakt, Plex, Jellyfin and its own check-ins).
 - **Not verified live**: the response shape is from MDBList's published OpenAPI schema; no
   request was made with a real key.
 
+
+## 21. Milestone 8 design: browser editor, dry-run UI, rollback UI
+
+Addendum to sections 3 and 10 (v2). Off unless `ENABLE_EDITOR=true`.
+
+**Storage: one owner per catalog, recorded in `catalog_defs.source`.**
+- `source` gains the value `editor` (no CHECK constraint exists, so no table rebuild). A
+  catalog is either *file-managed* (`file`) or *editor-managed* (`editor`); `fixture` is unchanged.
+- The editor writes `catalog_defs` directly, through the same `accept_definition` call and the
+  same exclusion resolution as `apply_dir` (TMDB failure -> not saved, error shown). Web
+  workers, the pipeline and the schedule already read only `catalog_defs`, so a save takes
+  effect at once (the worker's `sync_schedules` picks up a changed schedule on its next tick).
+- `apply_dir` skips every catalog whose stored `source` is `editor`: a file with that id is
+  ignored (status `ignored` in the apply report and the worker log; nothing is stored, so
+  `/ops/status` does not list it as a definition error), and a missing file never marks it
+  removed. The editor itself checks `catalogs.d` (mounted read-only in the web container too)
+  and warns on the catalog page while such a file exists. So **the editor wins once a catalog
+  has moved to it**; until then the file wins and the editor shows the catalog read-only.
+- File -> editor: button "Move to editor" on a file-managed catalog sets `source='editor'`
+  (definition unchanged, so no epoch bump). The page then tells the owner to delete or rename
+  the file (it is inert from then on). The move is one-way in this milestone: the worker
+  re-applies only when `catalogs.d` changes, so a "hand back" flag in SQLite would have no
+  trigger. To go back, export the YAML to a file and delete the catalog in the editor first
+  (a later addition if wanted).
+- New catalogs can be created in the editor (id = same rule as file names). YAML is
+  import/export: "Import YAML" pastes a whole definition into the form (validated like a
+  save, not saved until the owner saves); "Export YAML" downloads the stored definition
+  (comments are not kept; the stored form is canonical JSON).
+- Delete in the editor marks the catalog `removed` (as a deleted file does); disable/enable
+  toggles `state`.
+- Lost-update guard: the form carries the `config_rev` it was loaded from; a save is refused
+  if the stored revision changed meanwhile.
+
+**Auth (`/admin`, its own sub-app, no CORS, mounted in `create_app()` before the Stremio catch-all).**
+- `ENABLE_EDITOR` (default false). Disabled: `/admin` is a stub sub-app that answers 404 for
+  every path (like `/ops` without a token), so the prefix never reaches Stremio CORS.
+- Enabled: `SESSION_SECRET` (>= 32 bytes) and `ADMIN_PASSWORD` (>= 12 characters) from env;
+  `create_app()` raises at startup if either is missing or too short. One user, no username.
+  Password compared in constant time (HMAC of both values).
+- Session cookie `aic_admin`: stateless, `base64(payload).HMAC-SHA256(SESSION_SECRET)`,
+  payload = issued-at, expiry (12 h), random session id. HttpOnly, SameSite=Strict, Path=/admin,
+  `Secure` when `PUBLIC_BASE_URL` starts with https. Logout clears the cookie; rotating
+  `SESSION_SECRET` invalidates every session (stated in the README: no server-side revocation).
+- CSRF: every POST (login included) carries a hidden token = HMAC(secret, "csrf" | session
+  id) (a pre-login token for the login form, bound to a short-lived cookie); checked in
+  constant time, plus an `Origin`/`Referer` same-origin check when the header is present.
+  Missing/wrong -> 403, nothing changes.
+- Login rate limit in SQLite (shared by all uvicorn workers; migration 5, table
+  `admin_login_failures(client, at)`): at most 5 failures per client and 20 overall per 15
+  minutes, then 429 until the window passes. The client is uvicorn's `request.client.host`;
+  behind a reverse proxy that is the proxy unless `FORWARDED_ALLOW_IPS` names it (uvicorn then
+  takes the real address from `X-Forwarded-For`). Without that, the limit is effectively global,
+  and someone who keeps guessing keeps the login locked for everyone, the owner included. The
+  README therefore recommends setting `FORWARDED_ALLOW_IPS` and, better, restricting `/admin`
+  at the proxy (IP allow-list or VPN).
+- Every `/admin` response: `Cache-Control: no-store`, `X-Frame-Options: DENY`,
+  `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; form-action 'self'`
+  (no inline script; one small static JS file under `/admin/static` for live slider values and
+  polling), `Referrer-Policy: same-origin`. Unauthenticated requests: GET -> redirect to the
+  login page, anything else -> 401; unknown paths 404 only after auth.
+
+**Behaviour.**
+- Form generated from `CatalogDefinition.model_fields` in declaration order; fields typed `Any`
+  there take their type and bounds from the same-named field of `Limits`, `LLMSettings` or
+  `BudgetLimits`. Widget by type: bounded number -> slider + number box with a "set" checkbox
+  (unset = limit off); unbounded number -> number box; bool -> checkbox; `Literal` -> select;
+  `prompt` -> large textarea; `list[str]` -> one item per line; anything else (mappings,
+  `franchise_denylist`, `schedule`, a future field) -> a small YAML box. Section headings come
+  from a name -> group map with an "Other" fallback, so a field added in milestone 7 shows up
+  without editor changes (a test asserts every model field gets a widget). A "Raw YAML" tab
+  edits the whole definition instead.
+- Validate / Save both run `validate_definition` (pydantic + limits + model/budget settings +
+  schedule + feasibility + prompt render check); errors are shown next to the form (our own
+  messages, never input values echoed into logs) and nothing is stored. Validate also shows the
+  prompt rendered against the sample context and any exclusion names TMDB could not match.
+- Dry run: button on the catalog page -> `enqueue_job(kind='dry_run', trigger='admin')`, the
+  same admission as `/ops` (409 open job, 429 daily limit); the worker runs it through the
+  runner. The page polls a JSON endpoint and shows the run's status, stage counts, reject
+  reasons and model calls when it ends. **Save is go-live**: a dry run uses the saved
+  definition (the pipeline only reads `catalog_defs`), and a save bumps the epoch, so an
+  in-flight run ends `superseded` with a replacement queued, and a scheduled catalog's next
+  run uses the new text. A catalog saved *with* a schedule and no active list gets a real
+  catch-up refresh on the worker's next tick. Tuning flow for a new catalog: save without a
+  schedule, dry run until the counts look right, then add the schedule. (Disabling is no help:
+  a disabled catalog can neither dry-run nor be served.) A dry run stores no list, so the
+  result is the counts, not titles.
+- Rollback: the catalog page lists its snapshots (id, created, items, status, whether it still
+  has a payload / is revoked) with a Rollback button on each eligible one, a confirm page, then
+  `app.store.maintenance.rollback`; a refusal shows its `MaintenanceError` message.
+- Only controlled values are rendered besides the definition itself (which the owner wrote);
+  everything is HTML-escaped. No env value is ever rendered.
+
+**Tests:** login ok/bad/rate-limited; cookie flags (Secure toggled by `PUBLIC_BASE_URL`), expiry,
+tampered cookie; CSRF missing/wrong on every POST route; `/admin` CORS isolation (authorised,
+unauthorised, missing path, preflight, each with `Origin`, no `Access-Control-*`); disabled ->
+404; startup fails without/with a short secret; the sentinel sweep extended with
+`SESSION_SECRET` and `ADMIN_PASSWORD` and authenticated `/admin` GETs; validation errors shown and
+nothing stored; save bumps rev/epoch; a stored definition loaded into the form and saved
+untouched keeps its `config_rev` (no spurious epoch bump); file vs editor ownership in `apply_dir`; dry run enqueued
+and its result shown; rollback ok and refused.
+
+## 22. Milestone 8 status
+
+Implemented on branch `milestone-8-editor`, as designed in section 21:
+
+- `app/api/admin.py`: the `/admin` sub-app (no CORS, mounted in `create_app()` before the
+  Stremio catch-all). `ENABLE_EDITOR` off -> 404 for every path; on -> `check_editor_settings()`
+  stops startup unless `SESSION_SECRET` has >= 32 bytes and `ADMIN_PASSWORD` >= 12 characters.
+  Stateless HMAC-SHA256 cookies (`aic_admin`, 12 h; a pre-login cookie binds the login form's
+  CSRF token), CSRF token + Origin/Referer check on every POST, login rate limit in table
+  `admin_login_failures` (migration 5). Without a session every path, unknown ones included,
+  redirects (GET) or answers 401; only the login page and its stylesheet are public. Responses
+  carry `no-store`, `X-Frame-Options: DENY` and a CSP without inline script or style.
+- `app/curation/editor.py`: form fields generated from `CatalogDefinition` (types and bounds of
+  `Any` fields from `Limits` / `LLMSettings` / `BudgetLimits`; a new field shows up in "Other",
+  as a YAML box if it has no simpler widget), form <-> definition with an exact round trip,
+  `check_definition` (`validate_definition` + prompt preview + exclusion resolution, reusing the
+  stored resolution), `save_checked` (lost-update guard on `config_rev`, `source = 'editor'`),
+  `move_to_editor`, `set_state`.
+- `app/curation/definitions.py`: `apply_dir` ignores files of editor-managed catalogs (status
+  `ignored`, nothing recorded) and never marks them removed.
+- `/ops` enqueue logic shared (`app.api.ops.enqueue`, trigger `admin` for editor dry runs);
+  `app.curation.status.catalog_status` for one catalog.
+- Templates and the small JS/CSS in `templates/admin/` (Jinja2 with autoescape).
+- Tests: `tests/unit/api/test_admin.py` (off by default, startup checks, cookie flags and
+  tampering, login CSRF, rate limits, CSRF + Origin on every POST route, CORS isolation and
+  headers, validation errors shown and nothing stored, untouched-form round trip keeps
+  `config_rev` (also parsed from the rendered HTML), stale form refused, TMDB failure saves
+  nothing, file -> editor ownership, dry run queued and its result shown, rollback and refusal,
+  generated widgets); the sentinel sweep now includes `SESSION_SECRET`, `ADMIN_PASSWORD` and
+  logged-in `/admin` pages and actions.
+- Not done (possible later additions): handing a catalog back from the editor to a file (no
+  trigger, see section 21), server-side session revocation, a history-clear button, showing a
+  dry run's titles (dry runs store no list).

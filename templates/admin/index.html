@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row"><h1>Catalogs</h1><a class="button" href="{{ prefix }}/new">New catalog</a></div>
+{% if not catalogs %}<p class="muted">No catalogs yet. Create one here, or move one from catalogs.d by opening it.</p>{% else %}
+<table class="list">
+  <thead><tr><th>Catalog</th><th>Managed by</th><th>State</th><th>Active list</th><th>Last run</th></tr></thead>
+  <tbody>
+  {% for c in catalogs %}
+    {% set run = c.recent_runs[0] if c.recent_runs else None %}
+    <tr>
+      <td><a href="{{ prefix }}/catalogs/{{ c.catalog_id }}">{{ c.name }}</a><br><span class="muted">{{ c.catalog_id }}</span></td>
+      <td>{{ "editor" if c.source == "editor" else ("file" if c.source == "file" else c.source) }}</td>
+      <td>{{ c.state }}{% if c.last_error %} <span class="error">· definition error</span>{% endif %}</td>
+      <td>{% if c.active_snapshot %}{{ c.active_snapshot.items }} items, {{ c.active_snapshot.created_at }}{% else %}<span class="muted">none</span>{% endif %}</td>
+      <td>{% if run %}{{ run.kind }} · {{ run.status }}{% if run.error_category %} <span class="error">{{ run.error_category }}</span>{% endif %}{% else %}<span class="muted">-</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

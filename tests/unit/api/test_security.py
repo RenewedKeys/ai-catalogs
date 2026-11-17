@@ -7,6 +7,7 @@ Security regression tests for milestone 1 (PLAN.md, sections 3 and 10):
 - the legacy surface is not mounted by default
 - CORS headers are only sent by the Stremio sub-app
 - authorised /ops responses (status JSON and HTML, webhooks) carry no secret either
+- logged-in /admin pages and actions (milestone 8) carry no secret either
 """
 
 import json
@@ -27,6 +28,8 @@ SENTINELS = {
     "ENCRYPTION_KEY": "SENTINEL-encryption-0123456789",
     "ADDON_ACCESS_TOKEN": "SENTINELaddontoken0123456789",
     "OPS_TOKEN": "SENTINEL-ops-token-0123456789",
+    "SESSION_SECRET": "SENTINEL-session-secret-0123456789abcdef",
+    "ADMIN_PASSWORD": "SENTINEL-admin-password-0123456789",
 }
 # Credentials a user typed into the form themselves; they live inside the encrypted config.
 USER_SECRETS = {
@@ -73,6 +76,8 @@ def _get_paths(app, blob: str) -> list[str]:
         "search": "heist",
         "token": SENTINELS["ADDON_ACCESS_TOKEN"],
         "extra": "skip=0",
+        "snapshot_id": "1",
+        "name": "admin.js",
     }
     paths = []
 
@@ -365,6 +370,63 @@ def test_authorised_ops_responses_reveal_no_secret(secrets, caplog):
     ]
     assert [r.status_code for r in responses] == [200, 200, 202, 409, 404, 401]
     assert "provider_auth" in responses[0].text
+    for r in responses:
+        _assert_clean(r, secrets, r.request.url.path)
+    for secret in secrets:
+        assert secret not in caplog.text
+
+
+def test_admin_editor_reveals_no_secret(secrets, caplog, monkeypatch, tmp_path):
+    """
+    Logged in to /admin with every secret set (including the session secret and the password
+    used to log in): every page, the status JSON, the export, the prompt preview, a validation
+    error, a save, a dry run and a refused rollback come back without any secret, and nothing
+    is logged with one.
+    """
+    import re
+
+    from app.store.catalogs import accept_definition
+    from app.store.db import now_ms, session, transaction
+
+    monkeypatch.setattr(settings, "ENABLE_EDITOR", True)
+    monkeypatch.setattr(settings, "CATALOGS_DIR", str(tmp_path))
+    with session() as conn, transaction(conn):
+        rev = accept_definition(conn, "sweep_two", "Sweep two", {"prompt": "Suggest {{ request_count }} films."})
+        conn.execute("UPDATE catalog_defs SET source = 'editor' WHERE catalog_id = 'sweep_two'")
+        conn.execute(
+            "INSERT INTO runs (catalog_id, config_rev, epoch, trigger, started_at, status, error_category, "
+            "error_status) VALUES ('sweep_two', ?, 0, 'admin', ?, 'failed', 'provider_auth', 401)",
+            (rev, now_ms()),
+        )
+    app = create_app(enable_legacy=False)
+    client = TestClient(app, follow_redirects=False)
+    origin = {"Origin": "https://example.org"}
+    responses = [client.get("/admin/login", headers=origin)]
+
+    def csrf(html):
+        return re.search(r'name="csrf" value="([^"]+)"', html).group(1)
+
+    responses.append(client.post("/admin/login", data={"csrf": csrf(responses[0].text), "password": "wrong-one!!!!"}))
+    responses.append(
+        client.post("/admin/login", data={"csrf": csrf(responses[0].text), "password": SENTINELS["ADMIN_PASSWORD"]})
+    )
+    assert responses[-1].status_code == 303
+    token = csrf(client.get("/admin/").text)
+    paths = [p for p in _get_paths(app, "x") if p.startswith("/admin")]
+    paths = [p.replace("trending_movie", "sweep_two") for p in paths] + ["/admin/catalogs/sweep_two/export.yaml"]
+    assert "/admin/catalogs/sweep_two" in paths and "/admin/static/admin.js" in paths
+    responses += [client.get(p, headers=origin) for p in paths]
+    form = {"csrf": token, "mode": "form", "base_rev": rev}
+    responses += [
+        client.post("/admin/catalogs/sweep_two/save", data={**form, "prompt": "{{ nope }}", "action": "save"}),
+        client.post(
+            "/admin/catalogs/sweep_two/save", data={**form, "prompt": "Films {{ request_count }}", "action": "validate"}
+        ),
+        client.post("/admin/catalogs/sweep_two/dry-run", data={"csrf": token}),
+        client.post("/admin/catalogs/sweep_two/rollback/1", data={"csrf": token}),
+        client.post("/admin/catalogs/sweep_two/save", data={**form, "prompt": "x", "action": "save"}, headers=origin),
+    ]
+    assert [r.status_code for r in responses[-5:]] == [422, 200, 303, 409, 403]
     for r in responses:
         _assert_clean(r, secrets, r.request.url.path)
     for secret in secrets:
