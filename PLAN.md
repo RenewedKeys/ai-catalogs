@@ -1,6 +1,6 @@
 # Plan: Curated daily AI catalogs on a fork of stremio-ai-companion
 
-Revision 4 (after Codex review rounds 1-3 of the plan, and a review of the milestone 1
+Revision 5 (after Codex review rounds 1-3 of the plan, and a review of the milestone 1
 implementation). Milestone 1 is implemented; see section 16 for its status.
 
 ## 0. Goal and fixed decisions
@@ -142,9 +142,11 @@ and RPDB URLs would leak the key).
   of any snapshot's `created_at`.
 - `history(activation_id, catalog_id, tmdb_id, imdb_id, title, year)`; one row per item per
   activation, referencing `activations` (not `snapshots`), with no cascade from snapshot
-  pruning. History retention is separate: keep the rows of the last
-  `max(history_window_runs, 30)` activations per catalog, so a 14-run window (or a later
-  increase) is always backed by data even though only 10 payloads are kept.
+  pruning. **Activation and history rows are never pruned**; only snapshot payloads are
+  (10 per catalog). At 100 compact rows per daily run this is about 36,500 rows per catalog
+  per year, which SQLite handles without effort, and it means any window size, any later
+  increase of `history_window_runs`, and the window of any rollback target are always
+  backed by data. (`history clear` revokes; it does not delete.)
 - `runs(id, job_id, catalog_id, config_rev, epoch, seed, trigger, dry_run, started_at,
   finished_at, status, stage_counts_json, reject_reasons_json, prompt_hash, model_calls,
   tokens_in, tokens_out, relaxed_window, repeats, error_category)`. Status:
@@ -207,14 +209,22 @@ Transactions and recovery:
   started under the old epoch therefore fails its commit check and ends `superseded` with
   one replacement job queued, so a rollback cannot be overwritten by a list that was
   selected against the pre-rollback history. They do not need the worker lease.
-  - Rollback to snapshot S (must still have its payload): S becomes `active`; every
-    activation after S's own activation gets `revoked_at` (their titles become eligible
-    again; rows are kept for audit); no new activation row is written, so S's original
-    activation keeps its place in the window. Intervening activations are thus excluded
-    from "last N".
-  - History clear: sets `revoked_at` on all of the catalog's activations.
-  Tests: a 14-run window after more than 14 (and more than 10) publications; the window
-  after a rollback; rollback during an in-flight run.
+  - Rollback to snapshot S. Preconditions, otherwise the command refuses with a clear
+    message and changes nothing: S still has its payload, **and S's activation is not
+    revoked**. (After A -> B -> C and a rollback to A, B and C are revoked and are no longer
+    rollback targets; likewise nothing is a rollback target after `history clear`. To get
+    such a list back the owner runs a refresh.) Effect: S becomes `active`; every
+    activation after S's own gets `revoked_at` (their titles become eligible again; rows
+    are kept for audit); no new activation row is written, so S's activation keeps its
+    place and the active snapshot's titles are always inside the history window.
+  - History clear: sets `revoked_at` on all of the catalog's activations except the one
+    of the currently active snapshot, so the list being served is still excluded from the
+    next refresh.
+  Invariant (asserted in tests after every operation): the active snapshot's activation
+  is non-revoked. Tests: a 14-run and a 30-run window after 50 publications; the window
+  after a rollback to an old retained snapshot; repeated rollbacks (A -> B -> C, to A, then
+  to B is refused); rollback after `history clear` (refused); increasing
+  `history_window_runs` afterwards; rollback during an in-flight run.
 - **Run admission:** `max_runs_per_day` and the one-open-job rule are checked in the same
   transaction that inserts the job, so CLI, webhook and scheduler cannot race past them.
 - Retry times live in `jobs.not_before`, so they survive restarts.
@@ -554,13 +564,19 @@ Secrets and tokens:
 4. Curated LLM layer + budget ledger + prompt templating + `probe_model.py`.
 5. Pipeline + history + definition loader (`apply`, `validate`) + the **shared leased job
    runner**: the one code path that admits a job, takes the lease, runs the pipeline and
-   commits. CLI `run` / `--dry-run` enqueue a job and execute it through that runner (taking
-   the lease if no worker holds it, otherwise leaving it to the worker); nothing publishes
-   outside it. CLI `rollback` / `history clear` as maintenance operations (section 4).
-6. Worker process around the runner: schedule, catch-up, heartbeat task, abandoned-job
-   recovery; `/ops` sub-app (webhook + status); backup; the worker's real health check
-   replaces the placeholder and the compose smoke test also asserts lease ownership and
-   release.
+   commits. The runner owns everything section 4 requires of a lease holder from this
+   milestone on: the independent heartbeat task (lease renewal + job heartbeat),
+   cancellation on lost ownership and on SIGTERM/SIGINT, the wall-clock cap, and
+   abandoned-job recovery, which it performs at start before claiming. CLI `run` /
+   `--dry-run` enqueue a job and execute it through that runner (taking the lease if no
+   worker holds it, otherwise leaving it to the worker); nothing publishes outside it. CLI
+   `rollback` / `history clear` as maintenance operations (section 4). Tests: a standalone
+   CLI run longer than the lease TTL keeps the lease and commits; a CLI run killed with
+   SIGKILL leaves a job that the next invocation recovers, with the previous snapshot intact.
+6. Worker process: a long-lived loop around the same runner adding the schedule, catch-up
+   and periodic (every minute) recovery; `/ops` sub-app (webhook + status); backup; the
+   worker's real health check replaces the placeholder and the compose smoke test also
+   asserts lease ownership and release.
 7. Seed catalog tuning over a week of real runs; rerun the integration matrix.
 8. (v2) Browser editor, dry-run UI, rollback UI.
 
