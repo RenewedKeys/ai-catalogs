@@ -3,7 +3,7 @@
 #
 #   web     PID 1 is uvicorn and /healthz answers 200
 #   worker  PID 1 is the worker module and it publishes no port
-#   stop    both exit with code 0 within the grace period
+#   stop    both stop within the grace period (worker exits 0; web exits 0 or 143)
 set -eu
 
 cleanup() { docker compose down -v --remove-orphans >/dev/null 2>&1 || true; }
@@ -51,8 +51,16 @@ docker compose stop
 elapsed=$(( $(date +%s) - start ))
 [ "$elapsed" -le 30 ] || { echo "stop took ${elapsed}s" >&2; exit 1; }
 
-for svc in web worker; do
-    code=$(docker inspect -f '{{.State.ExitCode}}' "$(docker compose ps -a -q "$svc")")
-    [ "$code" = "0" ] || { echo "$svc exited with $code" >&2; exit 1; }
-done
+exit_code() { docker inspect -f '{{.State.ExitCode}}' "$(docker compose ps -a -q "$1")"; }
+
+code=$(exit_code worker)
+[ "$code" = "0" ] || { echo "worker exited with $code" >&2; exit 1; }
+
+# uvicorn shuts down gracefully and then, with a single worker process, re-raises SIGTERM,
+# so 143 is also a clean stop. 137 would mean it was killed after the grace period.
+code=$(exit_code web)
+case "$code" in
+    0|143) ;;
+    *) echo "web exited with $code" >&2; exit 1 ;;
+esac
 echo "ok: both services stopped cleanly in ${elapsed}s"

@@ -350,8 +350,9 @@ async def _process_catalog_request_internal(
         return result
 
     except Exception as e:
-        logger.error(f"Catalog request failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # The detail stays generic: provider error messages can quote the API key.
+        logger.error(f"Catalog request failed: {type(e).__name__}")
+        raise HTTPException(status_code=500, detail="Catalog request failed")
 
 
 async def _process_catalog_request(

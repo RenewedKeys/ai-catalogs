@@ -193,8 +193,8 @@ async def preview_page(request: Request, config: str):
         logger.error(f"Validation error in preview: {e}")
         raise HTTPException(status_code=400, detail="Invalid config data")
     except Exception as e:
-        logger.error(f"General error in preview: {e}")
-        raise HTTPException(status_code=400, detail=f"Config error: {str(e)}")
+        logger.error(f"General error in preview: {type(e).__name__}")
+        raise HTTPException(status_code=400, detail="Invalid config")
 
 
 @router.post("/save-config")

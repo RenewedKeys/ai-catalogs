@@ -265,3 +265,17 @@ def test_request_log_masks_credential_path_segments():
     assert mask_url("http://h/c/TOKEN/catalog/movie/x.json") == "http://h/c/****/catalog/movie/x.json"
     assert mask_url("http://h/configure?config=SECRETBLOB") == "http://h/configure"
     assert mask_url("http://h/healthz") == "http://h/healthz"
+
+
+def test_catalog_errors_do_not_echo_the_provider_message(secrets, monkeypatch):
+    """Provider errors can quote the API key; the 500 detail must stay generic."""
+
+    class Boom:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(f"Incorrect API key provided: {USER_SECRETS['openai_api_key']}")
+
+    monkeypatch.setattr("app.api.stremio.LLMService", Boom)
+    client = TestClient(create_app(enable_legacy=True))
+    response = client.get(f"/config/{_user_blob()}/catalog/movie/trending_movie.json")
+    assert response.status_code == 500
+    _assert_clean(response, secrets, "catalog error")

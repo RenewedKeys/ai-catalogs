@@ -32,7 +32,9 @@ The web service listens on port 8000 (`PORT` in `.env` changes the published por
 ## Configuration
 
 All settings are environment variables; [.env.example](.env.example) lists them. API keys are
-read from the environment only and are never written to a response, a template or a log.
+read from the environment only and are never shown on a page or written to a log. One caveat
+applies with `ENABLE_LEGACY=true`: an addon URL generated there carries the keys in encrypted
+form, so whoever holds that URL can spend them through this server.
 
 | Variable | Purpose |
 |---|---|
@@ -57,7 +59,5 @@ cleanly (needs Docker; CI runs it).
 ## Credits and licence
 
 This is a fork of [willtho89/stremio-ai-companion](https://github.com/willtho89/stremio-ai-companion)
-(MIT, archived upstream), started from its commit `a49d450` with the full history kept. Some
-OpenRouter handling follows ideas from
-[itcon-pty-au/stremio-ai-search](https://github.com/itcon-pty-au/stremio-ai-search) (MIT).
+(MIT, archived upstream), started from its commit `a49d450` with the full history kept.
 Licensed under the MIT License; see [LICENSE](LICENSE), which keeps the upstream copyright.
