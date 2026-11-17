@@ -188,7 +188,7 @@ Transactions and recovery:
   the worker's remembered generation and the lease is unexpired; verify in `catalog_defs`
   that the catalog is `enabled` and its `config_rev` **and `epoch`** equal the run's; then
   mark old snapshot `superseded`, insert new `active`, insert the `activations` row and its
-  history rows, prune (payloads and history by their separate rules), set job `done`.
+  history rows, prune old snapshot payloads (never history), set job `done`.
 - **Every terminal outcome finalizes its job, in one transaction, fenced.** All
   job-state writes use `... WHERE id=? AND claim_gen=? AND state='running'` and are
   preceded by the lease-generation check, so a worker that lost ownership cannot touch a
@@ -212,7 +212,8 @@ Transactions and recovery:
   - Rollback to snapshot S. Preconditions, otherwise the command refuses with a clear
     message and changes nothing: S still has its payload, **and S's activation is not
     revoked**. (After A -> B -> C and a rollback to A, B and C are revoked and are no longer
-    rollback targets; likewise nothing is a rollback target after `history clear`. To get
+    rollback targets; likewise no older snapshot is eligible for rollback after
+    `history clear`. To get
     such a list back the owner runs a refresh.) Effect: S becomes `active`; every
     activation after S's own gets `revoked_at` (their titles become eligible again; rows
     are kept for audit); no new activation row is written, so S's activation keeps its
