@@ -8,8 +8,12 @@ Layout:
       legacy web UI (/configure ...)  only when ENABLE_LEGACY is true
       mounted last, at "":
         stremio_app                   CORS: any origin, GET only, no credentials
+          curated catalog routes      /c/{token}/...
           legacy Stremio routes       only when ENABLE_LEGACY is true
-          (curated catalog routes are added here in milestone 2)
+
+The Stremio sub-app is a catch-all: anything registered on the parent after create_app()
+returns is shadowed by it. Register /ops and /admin (each its own sub-app, without CORS)
+inside create_app(), before the final mount.
 
 Only the routes Stremio clients and AIOMetadata fetch cross-origin get CORS headers. Anything
 registered on the parent (and, later, /ops) is never readable from another origin.
@@ -20,6 +24,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI, Request
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.staticfiles import StaticFiles
@@ -27,7 +32,7 @@ from starlette.types import Scope, Receive, Send
 
 from app import __version__
 from app.core.config import settings
-from app.core.logging import logger
+from app.core.logging import describe_error, logger
 
 # Path segments that carry a credential: /config/{encrypted blob}/... and /c/{access token}/...
 _SECRET_SEGMENT = re.compile(r"/(config|c)/[^/?#]+")
@@ -56,6 +61,17 @@ class CachedStaticFiles(StaticFiles):
         await super().__call__(scope, receive, send_with_cache_headers)
 
 
+def _open_store() -> None:
+    from app.store.db import session
+
+    try:
+        with session():
+            pass
+    except Exception as e:
+        logger.error(f"Cannot open the database at {settings.DATABASE_PATH}: {describe_error(e)}")
+        raise
+
+
 def create_app(enable_legacy: bool | None = None) -> FastAPI:
     """
     Build the ASGI application.
@@ -69,6 +85,9 @@ def create_app(enable_legacy: bool | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Open (and if needed create and migrate) the database now, so a missing or
+        # unwritable volume stops the web service at startup instead of at the first request.
+        await run_in_threadpool(_open_store)
         if enable_legacy:
             from app.services.cache import CACHE_INSTANCE
 
@@ -114,6 +133,10 @@ def create_app(enable_legacy: bool | None = None) -> FastAPI:
     )
     # One override table for both apps, so tests can keep using app.dependency_overrides.
     stremio_app.dependency_overrides = app.dependency_overrides
+
+    from app.api.curated import router as curated_router
+
+    stremio_app.include_router(curated_router)
 
     if enable_legacy:
         # Imported lazily: these modules need ENCRYPTION_KEY, which is optional when legacy is off.

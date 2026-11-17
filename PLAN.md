@@ -557,10 +557,16 @@ Secrets and tokens:
    `upstream` remote, push `main` to `origin`; it is not a GitHub fork object, so the MIT
    LICENSE and a fork notice in the README carry the attribution); deps, rename, `ENABLE_LEGACY=false`, secret-rendering fix,
    sentinel test, CORS restructuring, compose with web/worker/volume.
-2. Store (schema incl. `catalog_defs`, `activations`, history retention; lease, fenced
-   job claim and fenced commit primitives with their tests) + curated routes + manifest
-   fed by a fixture snapshot; AIOMetadata integration matrix (the riskiest external
-   dependency, tested first).
+2. Delivered in two pull requests:
+   - **2a**: store (full schema incl. `catalog_defs`, `activations`, history retention;
+     migrations safe under concurrent first start) + curated routes + manifest fed by a
+     fixture snapshot (`load-fixture`); AIOMetadata contract test and the runbook for the
+     integration matrix (`docs/aiometadata-integration.md`), the riskiest external
+     dependency, tested first. Python 3.15 (the image's version) added to the CI matrix.
+   - **2b**: lease, fenced job claim and fenced commit primitives with their tests,
+     including SIGKILL between claim and commit and inside the commit.
+   Milestone 2 is complete when 2b is merged and the integration matrix has been run
+   against a real AIOMetadata (it needs Docker and a Stremio client, so the owner runs it).
 3. TMDB resolver + gatekeeper + blacklist/franchise resolver script.
 4. Curated LLM layer + budget ledger + prompt templating + `probe_model.py`.
 5. Pipeline + history + definition loader (`apply`, `validate`) + the **shared leased job

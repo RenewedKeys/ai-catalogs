@@ -3,6 +3,9 @@
 #
 #   web     PID 1 is uvicorn and /healthz answers 200
 #   worker  PID 1 is the worker module and it publishes no port
+#   store   the web workers create the database on the volume (racing on first start), the
+#           curated manifest is empty, a fixture loaded with the CLI is served whole at
+#           offset 0 and empty at skip=100, and it survives a container restart
 #   stop    both stop within the grace period (worker exits 0; web exits 0 or 143)
 #
 # Isolated from any real deployment in this directory: it runs under its own Compose
@@ -62,6 +65,37 @@ echo "ok: worker publishes no port"
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/configure")
 [ "$code" = "404" ] || { echo "/configure answered $code with legacy off" >&2; exit 1; }
 echo "ok: legacy routes are not mounted"
+
+base="http://localhost:$PORT/c/public"
+json_get() { curl -fsS "$1" | python3 -c "import json, sys; print($2)"; }
+
+n=$(json_get "$base/manifest.json" 'len(json.load(sys.stdin)["catalogs"])')
+[ "$n" = "0" ] || { echo "empty database lists $n catalogs" >&2; exit 1; }
+echo "ok: empty manifest on a fresh volume"
+
+dc exec -T web python -m app.curation load-fixture fixtures/test_catalog_100.json
+
+check_catalog() {
+    ids=$(json_get "$base/manifest.json" '",".join(c["id"] for c in json.load(sys.stdin)["catalogs"])')
+    [ "$ids" = "test_catalog" ] || { echo "manifest lists: $ids" >&2; exit 1; }
+    n=$(json_get "$base/catalog/movie/test_catalog.json" 'len(json.load(sys.stdin)["metas"])')
+    [ "$n" = "100" ] || { echo "offset 0 returned $n items" >&2; exit 1; }
+    n=$(json_get "$base/catalog/movie/test_catalog/skip=100.json" 'len(json.load(sys.stdin)["metas"])')
+    [ "$n" = "0" ] || { echo "skip=100 returned $n items" >&2; exit 1; }
+}
+check_catalog
+echo "ok: fixture served whole at offset 0, empty at skip=100"
+
+owner=$(dc exec -T web stat -c %U /data/ai-catalogs.sqlite)
+[ "$owner" = "appuser" ] || { echo "database owned by $owner" >&2; exit 1; }
+
+dc restart web
+i=0
+until curl -fsS "http://localhost:$PORT/healthz" >/dev/null 2>&1; do
+    i=$((i + 1)); [ "$i" -le 30 ] || { echo "web did not come back" >&2; exit 1; }; sleep 1
+done
+check_catalog
+echo "ok: database on the volume, owned by appuser, survives a restart"
 
 start=$(date +%s)
 dc stop

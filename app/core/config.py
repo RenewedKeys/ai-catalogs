@@ -28,6 +28,17 @@ class Settings(BaseSettings):
         default=None, description="Externally reachable base URL, e.g. https://catalogs.example.org (no trailing slash)"
     )
 
+    # Curated catalogs
+    DATABASE_PATH: str = Field(
+        default="/data/ai-catalogs.sqlite", description="SQLite database; must be on a local filesystem"
+    )
+    ADDON_ACCESS_TOKEN: str | None = Field(
+        default=None,
+        description="Secret path segment in /c/{token}/ URLs. Unset: the segment is 'public'",
+    )
+    CURATED_ADDON_ID: str = Field(default="community.curated-catalogs", description="Manifest id of the curated addon")
+    CURATED_ADDON_NAME: str = Field(default="AI Catalogs", description="Manifest name of the curated addon")
+
     # Legacy (upstream stremio-ai-companion) surface: /configure, /save-config, /config/{blob}/...
     # Off by default. Only enable it on a trusted network.
     ENABLE_LEGACY: bool = Field(default=False, description="Mount the upstream configure UI and per-user routes")
@@ -79,6 +90,14 @@ class Settings(BaseSettings):
             raise ValueError("ENCRYPTION_KEY (at least 4 characters) is required when ENABLE_LEGACY is true")
         if self.PUBLIC_BASE_URL:
             self.PUBLIC_BASE_URL = self.PUBLIC_BASE_URL.rstrip("/")
+        if self.ADDON_ACCESS_TOKEN is not None:
+            token = self.ADDON_ACCESS_TOKEN.strip()
+            if token == "":
+                self.ADDON_ACCESS_TOKEN = None
+            elif len(token) < 16 or not token.replace("-", "").replace("_", "").isalnum():
+                raise ValueError("ADDON_ACCESS_TOKEN must be at least 16 characters of [A-Za-z0-9_-]")
+            else:
+                self.ADDON_ACCESS_TOKEN = token
         return self
 
 
@@ -99,6 +118,9 @@ class TestSettings(Settings):
     # The inherited test suite exercises the legacy routes through the module-level app.
     # Tests of the default (legacy off) behaviour build their own app with create_app().
     ENABLE_LEGACY: bool = Field(default=True)
+
+    # Tests point this at a temporary file (tests/conftest.py).
+    DATABASE_PATH: str = Field(default="/nonexistent/set-by-conftest.sqlite")
 
 
 @lru_cache()
