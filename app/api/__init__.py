@@ -1,7 +1,21 @@
 """
-API routes for the Stremio AI Companion application.
+Application factory.
+
+Layout:
+
+    app (parent)                      no CORS
+      /healthz, /static
+      legacy web UI (/configure ...)  only when ENABLE_LEGACY is true
+      mounted last, at "":
+        stremio_app                   CORS: any origin, GET only, no credentials
+          legacy Stremio routes       only when ENABLE_LEGACY is true
+          (curated catalog routes are added here in milestone 2)
+
+Only the routes Stremio clients and AIOMetadata fetch cross-origin get CORS headers. Anything
+registered on the parent (and, later, /ops) is never readable from another origin.
 """
 
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -12,10 +26,17 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import Scope, Receive, Send
 
 from app import __version__
-from app.api.stremio import router as stremio_router
-from app.api.web import router as web_router
+from app.core.config import settings
 from app.core.logging import logger
-from app.services.cache import CACHE_INSTANCE
+
+# Path segments that carry a credential: /config/{encrypted blob}/... and /c/{access token}/...
+_SECRET_SEGMENT = re.compile(r"/(config|c)/[^/?#]+")
+
+
+def mask_url(url: str) -> str:
+    """Hide credential-bearing path segments (and the query string) before logging a URL."""
+    url = url.split("?", 1)[0]
+    return _SECRET_SEGMENT.sub(lambda m: f"/{m.group(1)}/****", url)
 
 
 class CachedStaticFiles(StaticFiles):
@@ -26,7 +47,6 @@ class CachedStaticFiles(StaticFiles):
 
         async def send_with_cache_headers(message):
             if message["type"] == "http.response.start":
-                # Add Cache-Control header for browser caching
                 # Cache static assets for 30 days (2592000 seconds)
                 headers = list(message.get("headers", []))
                 headers.append((b"Cache-Control", b"public, max-age=2592000, immutable"))
@@ -36,63 +56,77 @@ class CachedStaticFiles(StaticFiles):
         await super().__call__(scope, receive, send_with_cache_headers)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    cache = CACHE_INSTANCE
-    if cache.is_redis:
-        logger.info("Cache backend: Redis")
-    else:
-        logger.info("Cache backend: in-memory LRU")
-    yield
+def create_app(enable_legacy: bool | None = None) -> FastAPI:
+    """
+    Build the ASGI application.
+
+    Args:
+        enable_legacy: mount the upstream configure UI and /config/{blob}/ routes.
+            Defaults to settings.ENABLE_LEGACY.
+    """
+    if enable_legacy is None:
+        enable_legacy = settings.ENABLE_LEGACY
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if enable_legacy:
+            from app.services.cache import CACHE_INSTANCE
+
+            logger.info("Legacy routes enabled. Cache backend: %s", "Redis" if CACHE_INSTANCE.is_redis else "in-memory")
+        else:
+            logger.info("Legacy routes disabled")
+        yield
+
+    app = FastAPI(
+        title=settings.APP_NAME,
+        description=settings.APP_DESCRIPTION,
+        version=__version__,
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    app.add_middleware(GZipMiddleware, compresslevel=6)
+
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        """Log requests with credential-bearing path segments masked."""
+        start_time = datetime.now()
+        logger.info(f"{request.method} {mask_url(str(request.url))}")
+        response = await call_next(request)
+        duration = datetime.now() - start_time
+        logger.info(f"Response: {response.status_code} - Duration: {duration.total_seconds()}s")
+        return response
+
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz():
+        return {"status": "ok"}
+
+    app.mount("/static", CachedStaticFiles(directory="./.assets"), name="static")
+
+    # Routes fetched cross-origin by Stremio clients and AIOMetadata.
+    stremio_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    stremio_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["GET"],
+    )
+    # One override table for both apps, so tests can keep using app.dependency_overrides.
+    stremio_app.dependency_overrides = app.dependency_overrides
+
+    if enable_legacy:
+        # Imported lazily: these modules need ENCRYPTION_KEY, which is optional when legacy is off.
+        from app.api.stremio import router as stremio_router
+        from app.api.web import router as web_router
+
+        app.include_router(web_router)
+        stremio_app.include_router(stremio_router)
+
+    # Mounted last so every parent route above takes precedence.
+    app.mount("", stremio_app)
+    app.state.stremio_app = stremio_app
+    return app
 
 
-# Create FastAPI app
-app = FastAPI(
-    title="Stremio AI Companion",
-    description="Your AI-powered movie discovery companion for Stremio",
-    version=__version__,
-    lifespan=lifespan,
-)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
-)
-
-app.mount("/static", CachedStaticFiles(directory="./.assets"), name="static")
-
-app.add_middleware(GZipMiddleware, compresslevel=9)
-
-
-# Add request logging middleware
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """Log all incoming requests and their responses."""
-    start_time = datetime.now()
-    url_str = str(request.url)
-    if "/config/" in url_str:
-        base, rest = url_str.split("/config/", 1)
-        # mask up to the next '/'
-        masked = rest
-        if "/" in rest:
-            token, tail = rest.split("/", 1)
-            # also handle base64 padding marker '==' cases inside token
-            token = token.split("==", 1)[0]
-            masked = f"****/{tail}"
-        safe_url = f"{base}/config/{masked}"
-    else:
-        safe_url = url_str
-    logger.info(f"{request.method} {safe_url}")
-    response = await call_next(request)
-    duration = datetime.now() - start_time
-    logger.info(f"Response: {response.status_code} - Duration: {duration.total_seconds()}s")
-    return response
-
-
-# Include routers
-app.include_router(web_router)
-app.include_router(stremio_router)
+app = create_app()

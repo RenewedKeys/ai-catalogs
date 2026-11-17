@@ -30,7 +30,10 @@ class EncryptionService:
             password: The password to use for encryption/decryption.
                      If not provided, uses the value from settings.
         """
-        self.password = (password or settings.ENCRYPTION_KEY).encode()
+        key = password or settings.ENCRYPTION_KEY
+        if not key:
+            raise RuntimeError("ENCRYPTION_KEY is not set; it is required by the legacy config routes")
+        self.password = key.encode()
 
     def _get_key(self, salt: bytes) -> bytes:
         """

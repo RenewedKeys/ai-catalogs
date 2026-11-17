@@ -189,20 +189,17 @@ class TestCachedCatalog:
             assert result == {"metas": existing_entries["metas"]}
 
     @pytest.mark.asyncio
-    async def test_catalog_id_fallback(self, mock_cache, mock_process_catalog_request):
-        """Test fallback to trending when catalog_id is invalid."""
-        # Set up cache miss
+    async def test_unknown_catalog_id_is_404(self, mock_cache, mock_process_catalog_request):
+        """An unknown catalog id is rejected instead of silently serving the trending catalog."""
+        from fastapi import HTTPException
+
         mock_cache.aget.return_value = None
 
-        # Invalid catalog_id
-        await _cached_catalog("test_config", ContentType.MOVIE, "invalid_catalog")
+        with pytest.raises(HTTPException) as exc:
+            await _cached_catalog("test_config", ContentType.MOVIE, "invalid_catalog")
 
-        # Verify _process_catalog_request_internal was called
-        mock_process_catalog_request.assert_called_once()
-
-        # Verify trending prompt was used
-        prompt_arg = mock_process_catalog_request.call_args[0][1]
-        assert "trending" in prompt_arg.lower()
+        assert exc.value.status_code == 404
+        mock_process_catalog_request.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_duplicate_filtering(self, mock_cache, mock_process_catalog_request):

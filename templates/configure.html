@@ -215,11 +215,12 @@
             <div class="form-group">
                 <label for="openai_api_key" id="api_key_label">OpenAI API Key *</label>
                 <div style="position:relative;">
-                    <input type="password" id="openai_api_key" name="openai_api_key" required 
-                           placeholder="sk-..." value="{% if existing_config %}{{ existing_config.openai_api_key }}{% elif settings.OPENAI_API_KEY %}{{ settings.OPENAI_API_KEY }}{% endif %}" style="padding-right:2.5rem;">
+                    <input type="password" id="openai_api_key" name="openai_api_key" autocomplete="off" {% if not stored.openai %}required{% endif %}
+                           placeholder="{% if stored.openai %}Leave blank to keep the stored key{% else %}sk-...{% endif %}" value="" style="padding-right:2.5rem;">
                     <button type="button" class="copy-btn" onclick="toggleVisibility('openai_api_key', this)" aria-label="Toggle visibility" style="position:absolute; right:0.5rem; top:5%; height:28px; display:flex; align-items:center; justify-content:center; padding:0 0.5rem; border-radius:6px; font-size:0.9rem; line-height:1;">👁️</button>
                 </div>
                 <div class="help-text" id="api_key_help">Your OpenAI API key for LLM movie suggestions</div>
+                {% if stored.openai %}<div class="help-text">A key is already stored and is never shown here. It is only reused with the provider it was saved for; enter a key if you change the provider.</div>{% endif %}
             </div>
             
             <div class="form-group">
@@ -255,8 +256,8 @@
             <div class="form-group">
                 <label for="tmdb_read_access_token">TMDB Read Access Token *</label>
                 <div style="position:relative;">
-                    <input type="password" id="tmdb_read_access_token" name="tmdb_read_access_token" required 
-                           placeholder="Your TMDB read access token" value="{% if existing_config %}{{ existing_config.tmdb_read_access_token }}{% elif settings.TMDB_READ_ACCESS_TOKEN %}{{ settings.TMDB_READ_ACCESS_TOKEN }}{% endif %}" style="padding-right:2.5rem;">
+                    <input type="password" id="tmdb_read_access_token" name="tmdb_read_access_token" autocomplete="off" {% if not stored.tmdb %}required{% endif %}
+                           placeholder="{% if stored.tmdb %}Leave blank to keep the stored token{% else %}Your TMDB read access token{% endif %}" value="" style="padding-right:2.5rem;">
                     <button type="button" class="copy-btn" onclick="toggleVisibility('tmdb_read_access_token', this)" aria-label="Toggle visibility" style="position:absolute; right:0.5rem; top:5%; height:28px; display:flex; align-items:center; justify-content:center; padding:0 0.5rem; border-radius:6px; font-size:0.9rem; line-height:1;">👁️</button>
                 </div>
                 <div class="help-text">Get your free read access token from <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color: rgba(255,255,255,0.8);">TMDB API Settings</a></div>
@@ -294,14 +295,15 @@
             <div class="form-group" id="posterdb_key_group" style="{% if existing_config and existing_config.use_posterdb %}display: block;{% else %}display: none;{% endif %}">
                 <label for="posterdb_api_key">RPDB API Key</label>
                 <div style="position:relative;">
-                    <input type="password" id="posterdb_api_key" name="posterdb_api_key" 
-                           placeholder="Your RPDB API key" value="{% if existing_config and existing_config.posterdb_api_key %}{{ existing_config.posterdb_api_key }}{% elif settings.RPDB_API_KEY %}{{ settings.RPDB_API_KEY }}{% endif %}" style="padding-right:2.5rem;">
+                    <input type="password" id="posterdb_api_key" name="posterdb_api_key" autocomplete="off"
+                           placeholder="{% if stored.rpdb %}Leave blank to keep the stored key{% else %}Your RPDB API key{% endif %}" value="" style="padding-right:2.5rem;">
                     <button type="button" class="copy-btn" onclick="toggleVisibility('posterdb_api_key', this)" aria-label="Toggle visibility" style="position:absolute; right:0.5rem; top:5%; height:28px; display:flex; align-items:center; justify-content:center; padding:0 0.5rem; border-radius:6px; font-size:0.9rem; line-height:1;">👁️</button>
                 </div>
                 <div class="help-text">Optional: Enhanced movie posters from <a href="https://ratingposterdb.com" target="_blank" style="color: rgba(255,255,255,0.8);">RPDB</a></div>
             </div>
             
             <input type="hidden" id="changed_catalogs" name="changed_catalogs" value="false">
+            {% if existing_config_token %}<input type="hidden" name="existing_config" value="{{ existing_config_token }}">{% endif %}
             <div style="display:flex; gap:1rem; align-items:flex-start; flex-wrap:wrap;">
                 <div class="form-group" style="flex:1; min-width:260px;">
                     <label>Include Feed Catalogs (Movies)</label>
