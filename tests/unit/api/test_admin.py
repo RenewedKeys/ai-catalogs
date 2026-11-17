@@ -1,5 +1,5 @@
 """
-/admin, the browser editor (PLAN.md section 21): off by default, startup checks, login, cookie
+/configure, the browser editor (PLAN.md section 21): off by default, startup checks, login, cookie
 flags, CSRF on every POST, the login rate limit, CORS isolation, editing through the definition
 validation, file vs editor ownership, dry run and rollback.
 """
@@ -63,8 +63,8 @@ def csrf_of(html: str) -> str:
 
 
 def login(client: TestClient, password: str = PASSWORD):
-    page = client.get("/admin/login")
-    return client.post("/admin/login", data={"csrf": csrf_of(page.text), "password": password})
+    page = client.get("/configure/login")
+    return client.post("/configure/login", data={"csrf": csrf_of(page.text), "password": password})
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ def client(anon):
 
 
 def token(client) -> str:
-    return csrf_of(client.get("/admin/").text)
+    return csrf_of(client.get("/configure/").text)
 
 
 def catalog_row(cid):
@@ -105,11 +105,11 @@ def test_disabled_by_default_every_path_404(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_EDITOR", False)
     c = TestClient(create_app(enable_legacy=False), follow_redirects=False)
     paths = [
-        ("GET", "/admin"),
-        ("GET", "/admin/"),
-        ("GET", "/admin/login"),
-        ("POST", "/admin/login"),
-        ("GET", "/admin/x"),
+        ("GET", "/configure"),
+        ("GET", "/configure/"),
+        ("GET", "/configure/login"),
+        ("POST", "/configure/login"),
+        ("GET", "/configure/x"),
     ]
     for method, path in paths:
         r = c.request(method, path, headers=ORIGIN)
@@ -141,11 +141,11 @@ def test_secret_length_is_counted_in_bytes(monkeypatch):
 
 def test_unauthenticated_requests_learn_nothing(anon):
     add_catalog()
-    for path in ["/admin/", "/admin/catalogs/alpha_list", "/admin/nope", "/admin/static/admin.js"]:
+    for path in ["/configure/", "/configure/catalogs/alpha_list", "/configure/nope", "/configure/static/admin.js"]:
         r = anon.get(path)
-        assert r.status_code == 303 and r.headers["location"] == "/admin/login"
-    assert anon.get("/admin/static/admin.css").headers["content-type"].startswith("text/css")  # login page style
-    for path in ["/admin/catalogs/alpha_list/dry-run", "/admin/new", "/admin/nope"]:
+        assert r.status_code == 303 and r.headers["location"] == "/configure/login"
+    assert anon.get("/configure/static/admin.css").headers["content-type"].startswith("text/css")  # login page style
+    for path in ["/configure/catalogs/alpha_list/dry-run", "/configure/new", "/configure/nope"]:
         assert anon.post(path, data={"csrf": "x"}).status_code == 401
     with db.session() as conn:
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
@@ -153,13 +153,13 @@ def test_unauthenticated_requests_learn_nothing(anon):
 
 def test_login_sets_strict_cookie(anon):
     r = login(anon)
-    assert r.status_code == 303 and r.headers["location"] == "/admin/"
+    assert r.status_code == 303 and r.headers["location"] == "/configure/"
     cookie = [v for k, v in r.headers.multi_items() if k == "set-cookie" and v.startswith("aic_admin=")][0]
     lowered = cookie.lower()
-    assert "httponly" in lowered and "samesite=strict" in lowered and "path=/admin" in lowered
+    assert "httponly" in lowered and "samesite=strict" in lowered and "path=/configure" in lowered
     assert "max-age=43200" in lowered
     assert "secure" not in lowered
-    assert anon.get("/admin/").status_code == 200
+    assert anon.get("/configure/").status_code == 200
 
 
 def test_cookie_is_secure_when_public_url_is_https(app, monkeypatch):
@@ -174,15 +174,15 @@ def test_wrong_password_is_401_and_sets_no_session(anon):
     r = login(anon, "wrong password!")
     assert r.status_code == 401 and "Wrong password" in r.text
     assert "aic_admin" not in anon.cookies
-    assert anon.get("/admin/").status_code == 303
+    assert anon.get("/configure/").status_code == 303
 
 
 def test_login_needs_csrf_and_the_prelogin_cookie(anon):
-    page = anon.get("/admin/login")
-    assert anon.post("/admin/login", data={"password": PASSWORD}).status_code == 403
-    assert anon.post("/admin/login", data={"csrf": "forged", "password": PASSWORD}).status_code == 403
+    page = anon.get("/configure/login")
+    assert anon.post("/configure/login", data={"password": PASSWORD}).status_code == 403
+    assert anon.post("/configure/login", data={"csrf": "forged", "password": PASSWORD}).status_code == 403
     fresh = TestClient(anon.app, follow_redirects=False)  # no pre-login cookie
-    assert fresh.post("/admin/login", data={"csrf": csrf_of(page.text), "password": PASSWORD}).status_code == 403
+    assert fresh.post("/configure/login", data={"csrf": csrf_of(page.text), "password": PASSWORD}).status_code == 403
     assert "aic_admin" not in anon.cookies
 
 
@@ -197,22 +197,22 @@ def test_tampered_or_expired_session_is_rejected(client):
     payload = json.loads(admin_mod._unb64(body))
     payload["exp"] += 3600
     _replace_session(client, value)
-    assert client.get("/admin/").status_code == 200  # the jar swap itself keeps the session
+    assert client.get("/configure/").status_code == 200  # the jar swap itself keeps the session
     forged = admin_mod._b64(json.dumps(payload).encode()) + "." + mac
     _replace_session(client, forged)
-    assert client.get("/admin/").status_code == 303
+    assert client.get("/configure/").status_code == 303
     expired = admin_mod.sign("session", {"sid": "x", "iat": 0, "exp": int(time.time()) - 1})
     _replace_session(client, expired)
-    assert client.get("/admin/").status_code == 303
+    assert client.get("/configure/").status_code == 303
     prelogin = admin_mod.sign("prelogin", {"sid": "x", "exp": int(time.time()) + 60})  # wrong purpose
     _replace_session(client, prelogin)
-    assert client.get("/admin/").status_code == 303
+    assert client.get("/configure/").status_code == 303
 
 
 def test_logout_clears_the_cookie(client):
-    r = client.post("/admin/logout", data={"csrf": token(client)})
+    r = client.post("/configure/logout", data={"csrf": token(client)})
     assert r.status_code == 303
-    assert client.get("/admin/").status_code == 303
+    assert client.get("/configure/").status_code == 303
 
 
 def test_login_rate_limit_per_client(anon):
@@ -244,14 +244,14 @@ def _post_paths(app) -> list[str]:
             path = route.path
             for k, v in fill.items():
                 path = path.replace("{" + k + "}", v)
-            out.append("/admin" + path)
+            out.append("/configure" + path)
     return out
 
 
 def test_every_post_route_requires_csrf_and_same_origin(client, app):
     rev = add_catalog()
     paths = _post_paths(app)
-    assert {"/admin/logout", "/admin/new", "/admin/catalogs/alpha_list/save"} <= set(paths)
+    assert {"/configure/logout", "/configure/new", "/configure/catalogs/alpha_list/save"} <= set(paths)
     good = token(client)
     form = {"base_rev": rev, "state": "disabled", "mode": "form", "prompt": PROMPT, "action": "save"}
     for path in paths:
@@ -264,21 +264,21 @@ def test_every_post_route_requires_csrf_and_same_origin(client, app):
     assert catalog_row("alpha_list")["config_rev"] == rev and catalog_row("alpha_list")["state"] == "enabled"
     with db.session() as conn:
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
-    assert client.get("/admin/").status_code == 200  # still logged in: logout was refused too
+    assert client.get("/configure/").status_code == 200  # still logged in: logout was refused too
 
 
 def test_csrf_token_is_bound_to_the_session(client, anon, app):
     add_catalog()
     other = TestClient(app, follow_redirects=False)
     login(other)
-    r = client.post("/admin/catalogs/alpha_list/dry-run", data={"csrf": token(other)})
+    r = client.post("/configure/catalogs/alpha_list/dry-run", data={"csrf": token(other)})
     assert r.status_code == 403
 
 
 def test_same_origin_post_is_accepted(client):
     add_catalog()
     r = client.post(
-        "/admin/catalogs/alpha_list/dry-run", data={"csrf": token(client)}, headers={"Origin": "http://testserver"}
+        "/configure/catalogs/alpha_list/dry-run", data={"csrf": token(client)}, headers={"Origin": "http://testserver"}
     )
     assert r.status_code == 303
 
@@ -293,21 +293,21 @@ def test_admin_is_outside_stremio_cors(app, authorised):
         login(c)
     add_catalog()
     requests = [
-        ("GET", "/admin"),
-        ("OPTIONS", "/admin"),
-        ("GET", "/admin/"),
-        ("GET", "/admin/catalogs/alpha_list/status.json"),
-        ("GET", "/admin/missing/path"),
-        ("POST", "/admin/catalogs/alpha_list/dry-run"),
-        ("OPTIONS", "/admin/"),
-        ("OPTIONS", "/admin/missing/path"),
+        ("GET", "/configure"),
+        ("OPTIONS", "/configure"),
+        ("GET", "/configure/"),
+        ("GET", "/configure/catalogs/alpha_list/status.json"),
+        ("GET", "/configure/missing/path"),
+        ("POST", "/configure/catalogs/alpha_list/dry-run"),
+        ("OPTIONS", "/configure/"),
+        ("OPTIONS", "/configure/missing/path"),
     ]
     for method, path in requests:
         headers = {**ORIGIN, "Access-Control-Request-Method": "POST"}
         r = c.request(method, path, headers=headers)
         assert not any(h.lower().startswith("access-control-") for h in r.headers), (method, path)
-        if path == "/admin":
-            assert r.status_code == 308 and r.headers["location"] == "/admin/"
+        if path == "/configure":
+            assert r.status_code == 308 and r.headers["location"] == "/configure/"
             continue
         assert r.headers["cache-control"] == "no-store"
         assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
@@ -315,15 +315,15 @@ def test_admin_is_outside_stremio_cors(app, authorised):
 
 
 def test_missing_path_is_404_after_login(client):
-    assert client.get("/admin/missing/path").status_code == 404
-    assert client.get("/admin/catalogs/none_here").status_code == 404
-    assert client.get("/admin/static/other.js").status_code == 404
-    assert client.get("/admin/static/admin.js").headers["content-type"].startswith("text/javascript")
+    assert client.get("/configure/missing/path").status_code == 404
+    assert client.get("/configure/catalogs/none_here").status_code == 404
+    assert client.get("/configure/static/other.js").status_code == 404
+    assert client.get("/configure/static/admin.js").headers["content-type"].startswith("text/javascript")
 
 
 def test_pages_have_no_inline_script_or_style(client):
     add_catalog()
-    for path in ["/admin/", "/admin/new", "/admin/catalogs/alpha_list", "/admin/login"]:
+    for path in ["/configure/", "/configure/new", "/configure/catalogs/alpha_list", "/configure/login"]:
         html = client.get(path).text
         assert "<script>" not in html and "style=" not in html and "<style" not in html
         assert "onclick" not in html
@@ -338,8 +338,8 @@ def values_for(definition):
 
 def test_create_catalog_from_the_form(client):
     vals = values_for({"prompt": PROMPT, "categories": ["alpha", "beta"], "min_vote_average": 6.5})
-    r = post_form(client, "/admin/new", vals, catalog_id="new_one", action="save")
-    assert r.status_code == 303 and r.headers["location"] == "/admin/catalogs/new_one?msg=created"
+    r = post_form(client, "/configure/new", vals, catalog_id="new_one", action="save")
+    assert r.status_code == 303 and r.headers["location"] == "/configure/catalogs/new_one?msg=created"
     row = catalog_row("new_one")
     assert row["source"] == "editor" and row["state"] == "enabled"
     assert json.loads(row["definition_json"]) == {
@@ -364,16 +364,16 @@ def test_validation_errors_are_shown_and_nothing_is_stored(client):
     ]
     for values, expected in cases:
         for action in ("validate", "save"):
-            r = post_form(client, "/admin/new", values, catalog_id="bad_one", action=action)
+            r = post_form(client, "/configure/new", values, catalog_id="bad_one", action=action)
             assert r.status_code == 422, (values, r.text[:300])
             assert "Not saved" in r.text and expected in r.text, (values, expected)
     assert catalog_row("bad_one") is None
-    r = post_form(client, "/admin/new", {"prompt": PROMPT}, catalog_id="Bad-Id", action="save")
+    r = post_form(client, "/configure/new", {"prompt": PROMPT}, catalog_id="Bad-Id", action="save")
     assert r.status_code == 422 and "catalog id" in r.text
 
 
 def test_submitted_values_are_kept_and_escaped_after_an_error(client):
-    r = post_form(client, "/admin/new", {"prompt": "<b>{{ nonsense }}</b>", "name": "<i>x</i>"}, catalog_id="c1")
+    r = post_form(client, "/configure/new", {"prompt": "<b>{{ nonsense }}</b>", "name": "<i>x</i>"}, catalog_id="c1")
     assert r.status_code == 422
     assert "<b>{{" not in r.text and "&lt;b&gt;{{ nonsense }}&lt;/b&gt;" in r.text
     assert 'value="&lt;i&gt;x&lt;/i&gt;"' in r.text
@@ -382,7 +382,7 @@ def test_submitted_values_are_kept_and_escaped_after_an_error(client):
 def test_validate_shows_the_prompt_preview_and_saves_nothing(client):
     rev = add_catalog()
     vals = values_for({"prompt": PROMPT, "year_min": 1970})
-    r = post_form(client, "/admin/catalogs/alpha_list/save", vals, base_rev=rev, action="validate")
+    r = post_form(client, "/configure/catalogs/alpha_list/save", vals, base_rev=rev, action="validate")
     assert r.status_code == 200 and "Valid. Not saved yet." in r.text
     assert "films for category alpha" in r.text and "1970" in r.text  # rendered prompt + constraints block
     assert catalog_row("alpha_list")["config_rev"] == rev
@@ -391,10 +391,10 @@ def test_validate_shows_the_prompt_preview_and_saves_nothing(client):
 def test_raw_yaml_tab_saves_and_reports_yaml_errors(client):
     rev = add_catalog()
     data = {"csrf": token(client), "mode": "yaml", "base_rev": rev, "action": "save"}
-    r = client.post("/admin/catalogs/alpha_list/save", data={**data, "yaml": "prompt: [unclosed"})
+    r = client.post("/configure/catalogs/alpha_list/save", data={**data, "yaml": "prompt: [unclosed"})
     assert r.status_code == 422 and "invalid YAML" in r.text
     r = client.post(
-        "/admin/catalogs/alpha_list/save", data={**data, "yaml": f"prompt: |\n  {PROMPT}\r\ntarget_count: 50\r\n"}
+        "/configure/catalogs/alpha_list/save", data={**data, "yaml": f"prompt: |\n  {PROMPT}\r\ntarget_count: 50\r\n"}
     )
     assert r.status_code == 303
     assert json.loads(catalog_row("alpha_list")["definition_json"]) == {"prompt": PROMPT, "target_count": 50}
@@ -404,7 +404,7 @@ def test_save_bumps_revision_and_epoch(client):
     rev = add_catalog()
     before = catalog_row("alpha_list")
     vals = values_for({"prompt": PROMPT, "min_runtime": 80})
-    r = post_form(client, "/admin/catalogs/alpha_list/save", vals, base_rev=rev, action="save")
+    r = post_form(client, "/configure/catalogs/alpha_list/save", vals, base_rev=rev, action="save")
     assert r.status_code == 303
     after = catalog_row("alpha_list")
     assert after["config_rev"] != rev and after["epoch"] == before["epoch"] + 1
@@ -447,7 +447,7 @@ def test_untouched_form_keeps_the_revision(client, definition):
     vals = values_for(definition)
     # Browsers submit textareas with CRLF line endings; unchecked boxes are not submitted.
     submitted = {k: v.replace("\n", "\r\n") for k, v in vals.items() if v != "" or k == "prompt"}
-    r = post_form(client, "/admin/catalogs/alpha_list/save", submitted, base_rev=rev, action="save")
+    r = post_form(client, "/configure/catalogs/alpha_list/save", submitted, base_rev=rev, action="save")
     assert r.status_code == 303, r.text[:500]
     row = catalog_row("alpha_list")
     assert json.loads(row["definition_json"]) == definition
@@ -458,7 +458,7 @@ def test_rendered_form_round_trips_from_the_html(client):
     """The values the page itself renders (not editor.form_values) submit back unchanged."""
     definition = ROUND_TRIP_DEFINITIONS[1]
     rev = add_catalog(**definition)
-    html = client.get("/admin/catalogs/alpha_list").text
+    html = client.get("/configure/catalogs/alpha_list").text
     form_html = html.split('id="form-tab"', 1)[1].split("</form>", 1)[0]
     data = {}
     for m in re.finditer(r'<input id="f-(\w+)" name="\1"[^>]*?value="([^"]*)"', form_html):
@@ -473,7 +473,7 @@ def test_rendered_form_round_trips_from_the_html(client):
     import html as html_lib
 
     data = {k: html_lib.unescape(v) for k, v in data.items()}
-    r = post_form(client, "/admin/catalogs/alpha_list/save", data, base_rev=rev, action="save")
+    r = post_form(client, "/configure/catalogs/alpha_list/save", data, base_rev=rev, action="save")
     assert r.status_code == 303, r.text[:800]
     assert catalog_row("alpha_list")["config_rev"] == rev
 
@@ -481,9 +481,11 @@ def test_rendered_form_round_trips_from_the_html(client):
 def test_stale_form_is_refused(client):
     rev = add_catalog()
     vals = values_for({"prompt": PROMPT, "min_runtime": 80})
-    assert post_form(client, "/admin/catalogs/alpha_list/save", vals, base_rev=rev, action="save").status_code == 303
+    assert (
+        post_form(client, "/configure/catalogs/alpha_list/save", vals, base_rev=rev, action="save").status_code == 303
+    )
     r = post_form(
-        client, "/admin/catalogs/alpha_list/save", values_for({"prompt": "Other"}), base_rev=rev, action="save"
+        client, "/configure/catalogs/alpha_list/save", values_for({"prompt": "Other"}), base_rev=rev, action="save"
     )
     assert r.status_code == 409 and "changed elsewhere" in r.text
     assert json.loads(catalog_row("alpha_list")["definition_json"])["min_runtime"] == 80
@@ -491,16 +493,16 @@ def test_stale_form_is_refused(client):
 
 def test_new_catalog_cannot_overwrite_an_existing_one(client):
     rev = add_catalog()
-    r = post_form(client, "/admin/new", values_for({"prompt": "Other"}), catalog_id="alpha_list", action="save")
+    r = post_form(client, "/configure/new", values_for({"prompt": "Other"}), catalog_id="alpha_list", action="save")
     assert r.status_code == 422 and "already exists" in r.text
     assert catalog_row("alpha_list")["config_rev"] == rev
 
 
 def test_exclusion_names_are_resolved_on_save(client, tmdb):
     vals = values_for({"prompt": PROMPT, "franchise_denylist": {"collections": ["Saga Nine", "Saga Unknown"]}})
-    r = post_form(client, "/admin/new", vals, catalog_id="excl", action="validate")
+    r = post_form(client, "/configure/new", vals, catalog_id="excl", action="validate")
     assert r.status_code == 200 and "No TMDB match for" in r.text and "Saga Unknown" in r.text
-    r = post_form(client, "/admin/new", vals, catalog_id="excl", action="save")
+    r = post_form(client, "/configure/new", vals, catalog_id="excl", action="save")
     assert r.status_code == 303
     resolved = json.loads(catalog_row("excl")["exclusions_json"])
     assert resolved["collection_ids"] == [900]
@@ -509,7 +511,7 @@ def test_exclusion_names_are_resolved_on_save(client, tmdb):
 def test_tmdb_failure_saves_nothing(client, tmdb):
     tmdb.fail_with = 503
     vals = values_for({"prompt": PROMPT, "blacklist_titles": ["Film 3"]})
-    r = post_form(client, "/admin/new", vals, catalog_id="excl", action="save")
+    r = post_form(client, "/configure/new", vals, catalog_id="excl", action="save")
     assert r.status_code == 422 and "could not be resolved on TMDB" in r.text
     assert catalog_row("excl") is None
 
@@ -517,29 +519,29 @@ def test_tmdb_failure_saves_nothing(client, tmdb):
 def test_disable_enable_and_delete(client):
     rev = add_catalog()
     r = client.post(
-        "/admin/catalogs/alpha_list/state", data={"csrf": token(client), "state": "disabled", "base_rev": rev}
+        "/configure/catalogs/alpha_list/state", data={"csrf": token(client), "state": "disabled", "base_rev": rev}
     )
     assert r.status_code == 303
     row = catalog_row("alpha_list")
     assert row["state"] == "disabled" and json.loads(row["definition_json"])["enabled"] is False
     r = client.post(
-        "/admin/catalogs/alpha_list/state",
+        "/configure/catalogs/alpha_list/state",
         data={"csrf": token(client), "state": "enabled", "base_rev": row["config_rev"]},
     )
     row = catalog_row("alpha_list")
     assert row["state"] == "enabled" and json.loads(row["definition_json"]) == {"prompt": PROMPT}
     r = client.post(
-        "/admin/catalogs/alpha_list/state",
+        "/configure/catalogs/alpha_list/state",
         data={"csrf": token(client), "state": "removed", "base_rev": row["config_rev"]},
     )
     assert r.status_code == 303 and catalog_row("alpha_list")["state"] == "removed"
-    assert client.get("/admin/catalogs/alpha_list").status_code == 404
+    assert client.get("/configure/catalogs/alpha_list").status_code == 404
 
 
 def test_export_yaml_round_trips(client):
     definition = ROUND_TRIP_DEFINITIONS[1]
     add_catalog(**definition)
-    r = client.get("/admin/catalogs/alpha_list/export.yaml")
+    r = client.get("/configure/catalogs/alpha_list/export.yaml")
     assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
     assert editor.parse_definition_yaml(r.text) == definition
 
@@ -552,18 +554,18 @@ async def test_file_catalog_is_read_only_until_moved(client, editor_on, tmdb):
     await apply_dir(editor_on, tmdb_client_factory=tmdb.client)
     row = catalog_row("from_file")
     assert row["source"] == "file"
-    page = client.get("/admin/catalogs/from_file").text
+    page = client.get("/configure/catalogs/from_file").text
     assert "Move to editor" in page and "<fieldset disabled>" in page.replace("fieldset disabled", "fieldset disabled")
     vals = values_for({"prompt": "Changed"})
-    r = post_form(client, "/admin/catalogs/from_file/save", vals, base_rev=row["config_rev"], action="save")
+    r = post_form(client, "/configure/catalogs/from_file/save", vals, base_rev=row["config_rev"], action="save")
     assert r.status_code == 409 and catalog_row("from_file")["config_rev"] == row["config_rev"]
 
-    r = client.post("/admin/catalogs/from_file/move-to-editor", data={"csrf": token(client)})
+    r = client.post("/configure/catalogs/from_file/move-to-editor", data={"csrf": token(client)})
     assert r.status_code == 303
     moved = catalog_row("from_file")
     assert moved["source"] == "editor"
     assert (moved["config_rev"], moved["epoch"]) == (row["config_rev"], row["epoch"])  # no epoch bump
-    page = client.get("/admin/catalogs/from_file").text
+    page = client.get("/configure/catalogs/from_file").text
     assert "still exists and is ignored" in page
 
     # The file is inert now: an edited file is ignored, and so is its removal.
@@ -578,7 +580,7 @@ async def test_file_catalog_is_read_only_until_moved(client, editor_on, tmdb):
     assert report.removed == [] and catalog_row("from_file")["state"] == "enabled"
 
     vals = values_for({"prompt": PROMPT, "min_runtime": 90})
-    r = post_form(client, "/admin/catalogs/from_file/save", vals, base_rev=row["config_rev"], action="save")
+    r = post_form(client, "/configure/catalogs/from_file/save", vals, base_rev=row["config_rev"], action="save")
     assert r.status_code == 303 and json.loads(catalog_row("from_file")["definition_json"])["min_runtime"] == 90
 
 
@@ -587,15 +589,15 @@ async def test_file_catalog_is_read_only_until_moved(client, editor_on, tmdb):
 
 def test_dry_run_is_queued_and_its_result_shown(client):
     rev = add_catalog(max_runs_per_day=1)
-    r = client.post("/admin/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
+    r = client.post("/configure/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
     assert r.status_code == 303 and r.headers["location"].endswith("msg=dry_run_queued")
     with db.session() as conn:
         job = conn.execute("SELECT id, kind, state, trigger FROM jobs").fetchone()
     assert (job["kind"], job["state"], job["trigger"]) == ("dry_run", "pending", "admin")
     page = client.get(r.headers["location"]).text
     assert "Dry run queued" in page and f"Job {job['id']} (dry_run) is pending" in page
-    assert client.get("/admin/catalogs/alpha_list/status.json").json()["open_job"]["id"] == job["id"]
-    r = client.post("/admin/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
+    assert client.get("/configure/catalogs/alpha_list/status.json").json()["open_job"]["id"] == job["id"]
+    r = client.post("/configure/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
     assert r.headers["location"].endswith("msg=already_open")
 
     with db.session() as conn, db.transaction(conn):  # the worker ran it
@@ -612,8 +614,8 @@ def test_dry_run_is_queued_and_its_result_shown(client):
                 json.dumps({"min_vote_average": 21, "<script>": 1}),
             ),
         )
-    assert client.get("/admin/catalogs/alpha_list/status.json").json()["open_job"] is None
-    page = client.get("/admin/catalogs/alpha_list").text
+    assert client.get("/configure/catalogs/alpha_list/status.json").json()["open_job"] is None
+    page = client.get("/configure/catalogs/alpha_list").text
     assert "suggested: 160" in page and "min_vote_average: 21" in page
     assert "&lt;script&gt;: 1" in page and "<script>: 1" not in page
 
@@ -621,7 +623,7 @@ def test_dry_run_is_queued_and_its_result_shown(client):
 def test_dry_run_of_a_disabled_catalog_is_refused(client):
     with db.session() as conn, db.transaction(conn):
         accept_definition(conn, "alpha_list", "Alpha", {"prompt": PROMPT}, state="disabled")
-    r = client.post("/admin/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
+    r = client.post("/configure/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
     assert r.headers["location"].endswith("msg=not_enabled")
     with db.session() as conn:
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
@@ -644,18 +646,18 @@ def test_rollback_and_refusal(client):
     _publish(rev, 3)
     with db.session() as conn:
         ids = [r["id"] for r in conn.execute("SELECT id FROM snapshots ORDER BY id")]
-    page = client.get("/admin/catalogs/alpha_list").text
+    page = client.get("/configure/catalogs/alpha_list").text
     assert f"/rollback/{ids[0]}" in page and f"/rollback/{ids[2]}" not in page  # active one has no button
-    confirm = client.get(f"/admin/catalogs/alpha_list/rollback/{ids[0]}")
+    confirm = client.get(f"/configure/catalogs/alpha_list/rollback/{ids[0]}")
     assert confirm.status_code == 200 and f"Roll back to list {ids[0]}?" in confirm.text
     epoch = catalog_row("alpha_list")["epoch"]
-    r = client.post(f"/admin/catalogs/alpha_list/rollback/{ids[0]}", data={"csrf": token(client)})
+    r = client.post(f"/configure/catalogs/alpha_list/rollback/{ids[0]}", data={"csrf": token(client)})
     assert r.status_code == 303 and r.headers["location"].endswith("msg=rolled_back")
     assert _active_id() == ids[0] and catalog_row("alpha_list")["epoch"] == epoch + 1
     page = client.get(r.headers["location"]).text
     assert "Rolled back" in page and f"/rollback/{ids[1]}" not in page  # revoked now
 
-    r = client.post(f"/admin/catalogs/alpha_list/rollback/{ids[1]}", data={"csrf": token(client)})
+    r = client.post(f"/configure/catalogs/alpha_list/rollback/{ids[1]}", data={"csrf": token(client)})
     assert r.status_code == 409 and "revoked" in r.text
     assert _active_id() == ids[0]
 
@@ -700,10 +702,10 @@ async def test_deleting_an_editor_catalog_releases_its_id_to_a_file(client, edit
     (editor_on / "alpha_list.yaml").write_text(f"prompt: |\n  {PROMPT}min_runtime: 60\n", encoding="utf-8")
     report = await apply_dir(editor_on, tmdb_client_factory=tmdb.client)
     assert [r.status for r in report.files] == ["ignored"]
-    page = client.get("/admin/catalogs/alpha_list").text
+    page = client.get("/configure/catalogs/alpha_list").text
     assert "brings the catalog back as a file catalog" in page
     r = client.post(
-        "/admin/catalogs/alpha_list/state", data={"csrf": token(client), "state": "removed", "base_rev": rev}
+        "/configure/catalogs/alpha_list/state", data={"csrf": token(client), "state": "removed", "base_rev": rev}
     )
     assert r.status_code == 303 and catalog_row("alpha_list")["state"] == "removed"
     report = await apply_dir(editor_on, tmdb_client_factory=tmdb.client)
@@ -715,7 +717,7 @@ async def test_deleting_an_editor_catalog_releases_its_id_to_a_file(client, edit
 
 def test_fixture_catalog_is_read_only_without_a_move_button(client):
     add_catalog(source="fixture")
-    page = client.get("/admin/catalogs/alpha_list").text
+    page = client.get("/configure/catalogs/alpha_list").text
     assert "loaded as a fixture" in page and "Move to editor" not in page
 
 
@@ -725,6 +727,165 @@ def test_missing_tmdb_key_is_a_validation_error(client, app, monkeypatch):
     monkeypatch.setattr(settings, "TMDB_READ_ACCESS_TOKEN", None)
     app.state.admin_app.state.tmdb_client_factory = TMDBClient
     vals = values_for({"prompt": PROMPT, "blacklist_titles": ["Film 3"]})
-    r = post_form(client, "/admin/new", vals, catalog_id="excl", action="save")
+    r = post_form(client, "/configure/new", vals, catalog_id="excl", action="save")
     assert r.status_code == 422 and "could not be resolved on TMDB" in r.text
     assert catalog_row("excl") is None
+
+
+# --------------------------------------------------------------------------- site root, legacy, addon URL
+
+
+def test_site_root_redirects_to_the_editor(anon):
+    r = anon.get("/")
+    assert r.status_code == 303 and r.headers["location"] == "/configure/"
+    assert not any(h.lower().startswith("access-control-") for h in r.headers)
+
+
+def test_site_root_is_404_with_the_editor_off(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_EDITOR", False)
+    assert TestClient(create_app(enable_legacy=False)).get("/").status_code == 404
+
+
+def test_editor_and_legacy_cannot_both_be_on(editor_on):
+    with pytest.raises(admin_mod.EditorConfigError, match="ENABLE_LEGACY"):
+        create_app(enable_legacy=True)
+
+
+def test_index_shows_the_addon_url(client, monkeypatch):
+    html = client.get("/configure/").text
+    assert 'value="http://testserver/c/public/manifest.json"' in html
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://catalogs.example.org/")
+    monkeypatch.setattr(settings, "ADDON_ACCESS_TOKEN", "tok_0123456789abcdef")
+    html = client.get("/configure/").text
+    assert 'value="https://catalogs.example.org/c/tok_0123456789abcdef/manifest.json"' in html
+    assert 'data-copy="manifest-url"' in html
+
+
+def test_addon_url_is_on_the_index_only(client, monkeypatch):
+    monkeypatch.setattr(settings, "ADDON_ACCESS_TOKEN", "tok_0123456789abcdef")
+    add_catalog()
+    for path in ["/configure/new", "/configure/catalogs/alpha_list", "/configure/catalogs/alpha_list/status.json"]:
+        assert "tok_0123456789abcdef" not in client.get(path).text
+
+
+# --------------------------------------------------------------------------- EDITOR_AUTH=proxy
+
+USER = {"Remote-User": "owner"}
+
+
+def ptoken(client) -> str:
+    """The CSRF token in proxy mode (no logout form, so read it from the New page)."""
+    return csrf_of(client.get("/configure/new").text)
+
+
+@pytest.fixture
+def proxy_on(editor_on, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "EDITOR_AUTH", "proxy")
+    monkeypatch.setattr(settings, "EDITOR_PROXY_USER_HEADER", "Remote-User")
+    monkeypatch.setattr(settings, "SESSION_SECRET", None)
+    monkeypatch.setattr(settings, "ADMIN_PASSWORD", None)
+    monkeypatch.setattr(settings, "DATABASE_PATH", str(tmp_path / "proxy.sqlite"))
+    admin_mod._FILE_KEYS.clear()
+    return tmp_path
+
+
+@pytest.fixture
+def proxy_app(proxy_on, tmdb):
+    application = create_app(enable_legacy=False)
+    application.state.admin_app.state.tmdb_client_factory = tmdb.client
+    return application
+
+
+@pytest.fixture
+def proxied(proxy_app):
+    return TestClient(proxy_app, follow_redirects=False, headers=USER)
+
+
+def test_proxy_mode_starts_without_password_or_secret(proxy_app):
+    assert proxy_app is not None
+
+
+def test_proxy_mode_still_rejects_a_short_secret_when_one_is_set(proxy_on, monkeypatch):
+    monkeypatch.setattr(settings, "SESSION_SECRET", "short")
+    with pytest.raises(admin_mod.EditorConfigError):
+        create_app(enable_legacy=False)
+
+
+def test_proxy_mode_needs_a_header_name(proxy_on, monkeypatch):
+    monkeypatch.setattr(settings, "EDITOR_PROXY_USER_HEADER", " ")
+    with pytest.raises(admin_mod.EditorConfigError):
+        create_app(enable_legacy=False)
+
+
+def test_proxy_mode_fails_closed_without_the_user_header(proxy_app):
+    add_catalog()
+    c = TestClient(proxy_app, follow_redirects=False)
+    for method, path in [
+        ("GET", "/configure/"),
+        ("GET", "/configure/login"),
+        ("POST", "/configure/login"),
+        ("GET", "/configure/catalogs/alpha_list"),
+        ("GET", "/configure/static/admin.css"),
+        ("POST", "/configure/catalogs/alpha_list/dry-run"),
+        ("GET", "/configure/nope"),
+    ]:
+        for headers in ({}, {"Remote-User": ""}, {"Remote-User": "   "}):
+            r = c.request(method, path, headers=headers)
+            assert r.status_code == 403, (method, path, headers)
+            assert r.headers["cache-control"] == "no-store"
+
+
+def test_proxy_mode_signed_in_user_sees_the_editor(proxied):
+    add_catalog()
+    r = proxied.get("/configure/")
+    assert r.status_code == 200
+    assert "Signed in as owner" in r.text
+    assert "/configure/logout" not in r.text and "password" not in r.text.lower()
+    assert proxied.get("/configure/catalogs/alpha_list").status_code == 200
+    assert not any(c.startswith(admin_mod.SESSION_COOKIE) for c in r.headers.get_list("set-cookie"))
+
+
+def test_proxy_mode_has_no_login_or_logout(proxied):
+    r = proxied.get("/configure/login")
+    assert r.status_code == 303 and r.headers["location"] == "/configure/"
+    assert proxied.post("/configure/login", data={"password": "x"}).status_code == 404
+    assert proxied.post("/configure/logout", data={"csrf": ptoken(proxied)}).status_code == 404
+
+
+def test_proxy_mode_header_name_is_configurable(proxy_on, tmdb, monkeypatch):
+    monkeypatch.setattr(settings, "EDITOR_PROXY_USER_HEADER", "X-Forwarded-User")
+    c = TestClient(create_app(enable_legacy=False), follow_redirects=False)
+    assert c.get("/configure/", headers=USER).status_code == 403
+    assert c.get("/configure/", headers={"X-Forwarded-User": "owner"}).status_code == 200
+
+
+def test_proxy_mode_posts_still_need_csrf_and_same_origin(proxied, proxy_app):
+    add_catalog()
+    path = "/configure/catalogs/alpha_list/dry-run"
+    assert proxied.post(path, data={}).status_code == 403
+    assert proxied.post(path, data={"csrf": "forged"}).status_code == 403
+    assert proxied.post(path, data={"csrf": ptoken(proxied)}, headers=ORIGIN).status_code == 403
+    r = proxied.post(path, data={"csrf": ptoken(proxied)}, headers={"Origin": "http://testserver"})
+    assert r.status_code == 303
+
+
+def test_proxy_mode_csrf_token_is_bound_to_the_user(proxied, proxy_app):
+    add_catalog()
+    other = TestClient(proxy_app, follow_redirects=False, headers={"Remote-User": "someone-else"})
+    r = proxied.post("/configure/catalogs/alpha_list/dry-run", data={"csrf": ptoken(other)})
+    assert r.status_code == 403
+
+
+def test_proxy_mode_key_file_is_private_and_shared(proxied, proxy_on, proxy_app):
+    first = ptoken(proxied)
+    key_file = proxy_on / "editor-csrf.key"
+    assert key_file.is_file() and (key_file.stat().st_mode & 0o777) == 0o600
+    admin_mod._FILE_KEYS.clear()  # as a second uvicorn worker would start: it reads the same file
+    assert ptoken(proxied) == first
+
+
+def test_proxy_mode_uses_session_secret_when_set(proxy_on, monkeypatch, tmdb):
+    monkeypatch.setattr(settings, "SESSION_SECRET", SECRET)
+    c = TestClient(create_app(enable_legacy=False), follow_redirects=False, headers=USER)
+    assert c.get("/configure/").status_code == 200
+    assert not (proxy_on / "editor-csrf.key").exists()

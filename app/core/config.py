@@ -4,6 +4,7 @@ Application configuration settings for the Stremio AI Companion.
 
 import os
 from functools import lru_cache
+from typing import Literal
 from app import __version__
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -48,11 +49,18 @@ class Settings(BaseSettings):
     OPS_TOKEN: str | None = Field(
         default=None, description="Bearer token for /ops (header only). Unset: /ops answers 404"
     )
-    # Browser editor at /admin (PLAN.md section 21). Off by default; when on, both secrets are
-    # required (create_app() refuses to start without them).
-    ENABLE_EDITOR: bool = Field(default=False, description="Mount the catalog editor at /admin")
-    SESSION_SECRET: str | None = Field(default=None, description="Signs /admin session cookies; >= 32 bytes")
-    ADMIN_PASSWORD: str | None = Field(default=None, description="Password of the /admin login; >= 12 characters")
+    # Browser editor at /configure (PLAN.md sections 21 and 23). Off by default. With
+    # EDITOR_AUTH=password both secrets are required (create_app() refuses to start without
+    # them); with EDITOR_AUTH=proxy the reverse proxy's login (its user header) is used instead.
+    ENABLE_EDITOR: bool = Field(default=False, description="Mount the catalog editor at /configure")
+    EDITOR_AUTH: Literal["password", "proxy"] = Field(
+        default="password", description="password: the editor's own login; proxy: trust EDITOR_PROXY_USER_HEADER"
+    )
+    EDITOR_PROXY_USER_HEADER: str = Field(
+        default="Remote-User", description="Header carrying the user name set by the proxy's login (EDITOR_AUTH=proxy)"
+    )
+    SESSION_SECRET: str | None = Field(default=None, description="Signs /configure session cookies; >= 32 bytes")
+    ADMIN_PASSWORD: str | None = Field(default=None, description="Password of the /configure login; >= 12 characters")
 
     # Legacy (upstream stremio-ai-companion) surface: /configure, /save-config, /config/{blob}/...
     # Off by default. Only enable it on a trusted network.

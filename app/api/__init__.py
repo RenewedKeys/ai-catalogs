@@ -7,19 +7,20 @@ Layout:
       /healthz, /static
       legacy web UI (/configure ...)  only when ENABLE_LEGACY is true
       /ops                            sub-app, no CORS, bearer OPS_TOKEN (404 when unset)
-      /admin                          sub-app, no CORS, editor login (404 unless ENABLE_EDITOR)
+      /configure                      sub-app, no CORS, catalog editor (404 unless ENABLE_EDITOR)
+      /                               redirects to /configure/ when the editor is on
       mounted last, at "":
         stremio_app                   CORS: any origin, GET only, no credentials
           curated catalog routes      /c/{token}/...
           legacy Stremio routes       only when ENABLE_LEGACY is true
 
 The Stremio sub-app is a catch-all: anything registered on the parent after create_app()
-returns is shadowed by it. Register /ops and /admin (each its own sub-app, without CORS)
+returns is shadowed by it. Register /ops and /configure (each its own sub-app, without CORS)
 inside create_app(), before the final mount.
 
 Only the routes Stremio clients and AIOMetadata fetch cross-origin get CORS headers. Anything
 registered on the parent, and /ops (mounted before the catch-all), is never readable from
-another origin; the same holds for /admin.
+another origin; the same holds for the editor at /configure.
 """
 
 import re
@@ -159,20 +160,27 @@ def create_app(enable_legacy: bool | None = None) -> FastAPI:
     # on, missing or weak secrets stop the service here, at startup.
     from app.api.admin import check_editor_settings, create_admin_app
 
-    check_editor_settings()
+    check_editor_settings(enable_legacy)
 
-    @app.api_route("/admin", methods=["GET", "HEAD", "POST", "OPTIONS"], include_in_schema=False)
-    async def admin_root(request: Request):
-        # The mount below only matches "/admin/..."; without this the bare path would reach the
-        # Stremio catch-all (and its CORS header).
+    if not enable_legacy:  # the legacy UI owns "/" and "/configure" (check_editor_settings refuses both)
         from fastapi.responses import JSONResponse, RedirectResponse
 
-        if not settings.ENABLE_EDITOR:
-            return JSONResponse({"detail": "Not Found"}, status_code=404)
-        return RedirectResponse("/admin/", status_code=308)
+        @app.api_route("/configure", methods=["GET", "HEAD", "POST", "OPTIONS"], include_in_schema=False)
+        async def editor_root(request: Request):
+            # The mount below only matches "/configure/..."; without this the bare path would reach
+            # the Stremio catch-all (and its CORS header).
+            if not settings.ENABLE_EDITOR:
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+            return RedirectResponse("/configure/", status_code=308)
+
+        @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+        async def site_root(request: Request):
+            if not settings.ENABLE_EDITOR:
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+            return RedirectResponse("/configure/", status_code=303)
 
     admin_app = create_admin_app()
-    app.mount("/admin", admin_app)
+    app.mount("/configure", admin_app)
     app.state.admin_app = admin_app
 
     # Mounted last so every parent route above takes precedence.

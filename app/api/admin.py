@@ -1,13 +1,27 @@
 """
-Browser editor (PLAN.md section 21): ``/admin``, a sub-app with no CORS middleware, mounted in
+Browser editor (PLAN.md section 21): ``/configure``, a sub-app with no CORS middleware, mounted in
 ``create_app()`` before the Stremio catch-all.
 
-Off unless ``ENABLE_EDITOR`` is true; then every path answers 404, as if ``/admin`` did not
-exist. When on, ``SESSION_SECRET`` (>= 32 bytes) and ``ADMIN_PASSWORD`` (>= 12 characters) are
-required: ``check_editor_settings()`` makes ``create_app()`` fail at startup without them.
+Off unless ``ENABLE_EDITOR`` is true; then every path answers 404, as if ``/configure`` did not
+exist. ``/configure`` is the usual Stremio addon settings path, so a reverse proxy rule that
+protects addon settings pages covers the whole editor (PLAN.md section 23).
+
+``EDITOR_AUTH=password`` (default): ``SESSION_SECRET`` (>= 32 bytes) and ``ADMIN_PASSWORD``
+(>= 12 characters) are required; ``check_editor_settings()`` makes ``create_app()`` fail at
+startup without them.
+
+``EDITOR_AUTH=proxy``: no login of its own. The reverse proxy's login (e.g. Authelia behind
+Traefik forward-auth) sets ``EDITOR_PROXY_USER_HEADER`` (default ``Remote-User``); a request
+without it is refused (403), so the editor fails closed if the proxy rule is ever removed.
+Traefik's forward-auth deletes a client-sent copy of each ``authResponseHeaders`` header before
+copying the auth server's, so the header cannot be forged through the proxy; anything that can
+reach the container without the proxy (a published port, another container on its Docker
+network) can still send it. CSRF tokens are then bound to the
+user name and signed with ``SESSION_SECRET`` if set, otherwise with a random key kept next to the
+database (``editor-csrf.key``).
 
 Auth: one password, a login form, then a stateless session cookie signed with HMAC-SHA256
-(HttpOnly, SameSite=Strict, Path=/admin, Secure when ``PUBLIC_BASE_URL`` is https, 12 h).
+(HttpOnly, SameSite=Strict, Path=/configure, Secure when ``PUBLIC_BASE_URL`` is https, 12 h).
 Logout clears the cookie; rotating ``SESSION_SECRET`` ends every session. Every POST carries a
 CSRF token (HMAC of the session id; the login form's is bound to a short-lived pre-login
 cookie) and, when the browser sends one, an ``Origin`` of this site. Failed logins are limited
@@ -22,6 +36,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import time
 from pathlib import Path
@@ -33,6 +48,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.concurrency import run_in_threadpool
 
+from app.api.curated import PUBLIC_SEGMENT
 from app.api.ops import enqueue
 from app.core.config import settings
 from app.curation import editor
@@ -43,13 +59,14 @@ from app.store import db
 from app.store.catalogs import CATALOG_ID_RE
 from app.store.maintenance import MaintenanceError, rollback
 
-PREFIX = "/admin"
+PREFIX = "/configure"
 SESSION_COOKIE = "aic_admin"
 PRELOGIN_COOKIE = "aic_admin_pre"
 SESSION_TTL_S = 12 * 3600
 PRELOGIN_TTL_S = 3600
 MIN_SECRET_BYTES = 32
 MIN_PASSWORD_CHARS = 12
+FILE_KEY_CHARS = 64  # editor-csrf.key: 32 random bytes, hex
 LOGIN_WINDOW_MS = 15 * 60 * 1000
 LOGIN_MAX_PER_CLIENT = 5
 LOGIN_MAX_TOTAL = 20
@@ -87,13 +104,25 @@ NOTICES = {
 
 
 class EditorConfigError(RuntimeError):
-    """ENABLE_EDITOR is on but the editor's secrets are missing or too weak (startup refuses)."""
+    """ENABLE_EDITOR is on but the editor's settings are unusable (startup refuses)."""
 
 
-def check_editor_settings() -> None:
+def proxy_mode() -> bool:
+    return settings.EDITOR_AUTH == "proxy"
+
+
+def check_editor_settings(enable_legacy: Optional[bool] = None) -> None:
     if not settings.ENABLE_EDITOR:
         return
+    if settings.ENABLE_LEGACY if enable_legacy is None else enable_legacy:
+        raise EditorConfigError("ENABLE_EDITOR and ENABLE_LEGACY both use /configure; turn one of them off")
     secret = settings.SESSION_SECRET or ""
+    if proxy_mode():
+        if not settings.EDITOR_PROXY_USER_HEADER.strip():
+            raise EditorConfigError("EDITOR_AUTH=proxy: EDITOR_PROXY_USER_HEADER must name a header")
+        if secret and len(secret.encode("utf-8")) < MIN_SECRET_BYTES:
+            raise EditorConfigError(f"SESSION_SECRET, when set, must be at least {MIN_SECRET_BYTES} bytes")
+        return
     if len(secret.encode("utf-8")) < MIN_SECRET_BYTES:
         raise EditorConfigError(f"ENABLE_EDITOR is set: SESSION_SECRET must be at least {MIN_SECRET_BYTES} bytes")
     if len(settings.ADMIN_PASSWORD or "") < MIN_PASSWORD_CHARS:
@@ -105,8 +134,42 @@ def check_editor_settings() -> None:
 # ------------------------------------------------------------------ signing
 
 
+_FILE_KEYS: dict[str, bytes] = {}
+
+
+def _file_key() -> bytes:
+    """A random signing key kept next to the database (EDITOR_AUTH=proxy without SESSION_SECRET).
+
+    Created once with O_EXCL, so every uvicorn worker ends up reading the same key."""
+    path = Path(settings.DATABASE_PATH).resolve().parent / "editor-csrf.key"
+    cached = _FILE_KEYS.get(str(path))
+    if cached:
+        return cached
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        key = b""
+        for _ in range(50):  # another worker may be writing it right now
+            key = path.read_bytes().strip()
+            if len(key) == FILE_KEY_CHARS:
+                break
+            time.sleep(0.02)
+        if len(key) != FILE_KEY_CHARS:
+            raise EditorConfigError(f"{path} holds no usable key; delete it to have a new one made") from None
+    else:
+        key = secrets.token_hex(FILE_KEY_CHARS // 2).encode()
+        with os.fdopen(fd, "wb") as f:
+            f.write(key)
+    _FILE_KEYS[str(path)] = key
+    return key
+
+
 def _key() -> bytes:
-    return (settings.SESSION_SECRET or "").encode("utf-8")
+    if settings.SESSION_SECRET:
+        return settings.SESSION_SECRET.encode("utf-8")
+    if proxy_mode():
+        return _file_key()
+    return b""
 
 
 def _mac(purpose: str, data: bytes) -> bytes:
@@ -173,7 +236,16 @@ def _clear_cookie(response: Response, name: str) -> None:
 
 
 def session_of(request: Request) -> Optional[dict[str, Any]]:
+    if proxy_mode():
+        user = (request.headers.get(settings.EDITOR_PROXY_USER_HEADER) or "").strip()
+        # The CSRF token is the MAC of "proxy:<user>": stable per user, useless to anyone else.
+        return {"sid": f"proxy:{user}", "user": user} if user else None
     return unsign("session", request.cookies.get(SESSION_COOKIE))
+
+
+def manifest_url(request: Request) -> str:
+    base = (settings.PUBLIC_BASE_URL or f"{request.url.scheme}://{request.url.netloc}").rstrip("/")
+    return f"{base}/c/{settings.ADDON_ACCESS_TOKEN or PUBLIC_SEGMENT}/manifest.json"
 
 
 # ------------------------------------------------------------------ login rate limit
@@ -305,6 +377,8 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
         context.setdefault("csrf", csrf_token(sess["sid"]) if sess else "")
         context.setdefault("logged_in", sess is not None)
         context["prefix"] = PREFIX
+        context["proxy_auth"] = proxy_mode()
+        context["user"] = sess.get("user") if sess else None
         return HTMLResponse(env.get_template(template).render(**context), status_code=status_code)
 
     def redirect(path: str, msg: Optional[str] = None) -> RedirectResponse:
@@ -321,7 +395,18 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
         path = request.url.path[len(PREFIX) :] if request.url.path.startswith(PREFIX) else request.url.path
         sess = session_of(request)
         request.state.session = sess
-        if sess is None and path not in PUBLIC_PATHS:
+        if proxy_mode() and sess is None:
+            # Fail closed: no user header means the request did not pass the proxy's login.
+            response = PlainTextResponse(
+                "Sign-in required: this editor relies on the reverse proxy's login (EDITOR_AUTH=proxy), "
+                "and this request did not come through it.",
+                status_code=403,
+            )
+        elif proxy_mode() and path in ("/login", "/login/", "/logout"):
+            response = (
+                redirect("/") if request.method == "GET" else JSONResponse({"detail": "Not Found"}, status_code=404)
+            )
+        elif sess is None and path not in PUBLIC_PATHS:
             if request.method == "GET":
                 response = RedirectResponse(PREFIX + "/login", status_code=303)
             else:
@@ -398,7 +483,9 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
     @admin.get("/")
     async def index(request: Request):
         catalogs = await run_in_threadpool(_catalogs)
-        return page(request, "index.html", catalogs=catalogs, notice=notice(request))
+        return page(
+            request, "index.html", catalogs=catalogs, notice=notice(request), manifest_url=manifest_url(request)
+        )
 
     def _editor_page(
         request: Request,

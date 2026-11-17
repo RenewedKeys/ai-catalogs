@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
+<section class="panel manifest">
+  <h2>Addon URL</h2>
+  <p class="muted">Paste this into AIOMetadata's Custom Manifest Integration. A catalog appears there once it has published its first list.</p>
+  <div class="row">
+    <input type="text" id="manifest-url" value="{{ manifest_url }}" readonly>
+    <button type="button" class="button" data-copy="manifest-url">Copy</button>
+  </div>
+</section>
 <div class="row"><h1>Catalogs</h1><a class="button" href="{{ prefix }}/new">New catalog</a></div>
 {% if not catalogs %}<p class="muted">No catalogs yet. Create one here, or move one from catalogs.d by opening it.</p>{% else %}
 <table class="list">

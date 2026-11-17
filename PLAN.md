@@ -895,7 +895,7 @@ and its result shown; rollback ok and refused.
 
 Implemented on branch `milestone-8-editor`, as designed in section 21:
 
-- `app/api/admin.py`: the `/admin` sub-app (no CORS, mounted in `create_app()` before the
+- `app/api/admin.py`: the `/admin` sub-app (moved to `/configure`, section 23) (no CORS, mounted in `create_app()` before the
   Stremio catch-all). `ENABLE_EDITOR` off -> 404 for every path; on -> `check_editor_settings()`
   stops startup unless `SESSION_SECRET` has >= 32 bytes and `ADMIN_PASSWORD` >= 12 characters.
   Stateless HMAC-SHA256 cookies (`aic_admin`, 12 h; a pre-login cookie binds the login form's
@@ -924,3 +924,33 @@ Implemented on branch `milestone-8-editor`, as designed in section 21:
 - Not done (possible later additions): handing a catalog back from the editor to a file (no
   trigger, see section 21), server-side session revocation, a history-clear button, showing a
   dry run's titles (dry runs store no list).
+
+## 23. Editor at `/configure`, proxy sign-in, addon URL
+
+Asked by the owner after milestone 8, to fit a Traefik + Authelia setup where Stremio addon
+hosts share one Authelia rule that protects `/`, anything under `/configure` and paths ending in
+`/admin`, and lets everything else through (the addon routes must stay reachable by AIOMetadata).
+Under `/admin/...` the editor's inner pages would have had no proxy login at all.
+
+- The editor moved from `/admin` to `/configure` (the usual Stremio addon settings path); `/`
+  redirects there when `ENABLE_EDITOR` is on (404 otherwise). The cookies' path follows.
+  `ENABLE_LEGACY` also owns `/` and `/configure`, so `check_editor_settings()` refuses both on.
+- `EDITOR_AUTH=proxy` (default `password`, unchanged): no login of its own. The session is the
+  user name in `EDITOR_PROXY_USER_HEADER` (default `Remote-User`, set by Authelia through Traefik
+  forward-auth, which deletes a client-sent copy of every `authResponseHeaders` header before
+  copying Authelia's: checked in Traefik v3.7 `pkg/middlewares/auth/forward.go`). No header (or a blank one) -> 403
+  for every editor path, so the editor fails closed if the proxy rule disappears. `/login` GET
+  redirects to the list, `/login` POST and `/logout` answer 404. CSRF tokens are the MAC of
+  `proxy:<user>`; the Origin check stays. The MAC key is `SESSION_SECRET` when set (still >= 32
+  bytes), otherwise a random key created once (O_EXCL, mode 0600, 64 hex characters) as
+  `editor-csrf.key` next to the database, so every uvicorn worker uses the same one. Trust
+  boundary: anything that reaches the container without the proxy (a published port, another
+  container on its Docker network) can send the header; documented in the README and
+  `.env.example`.
+- The catalog list shows the addon manifest URL (`PUBLIC_BASE_URL`, else the request's host;
+  `ADDON_ACCESS_TOKEN`, else `public`) with a copy button. It is the only editor page with the
+  token; the sentinel sweep allows the token on that page alone and checks it is there.
+- Tests in `tests/unit/api/test_admin.py`: root redirect and 404, legacy conflict, addon URL
+  (and nowhere else), proxy mode starts without secrets, fails closed without the header, has no
+  login/logout, custom header name, CSRF + Origin still required, token bound to the user, key
+  file private and shared between workers, `SESSION_SECRET` preferred when set.

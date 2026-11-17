@@ -219,7 +219,7 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     (
         5,
         [
-            # Failed /admin logins (app.api.admin), for the login rate limit shared by every
+            # Failed /configure logins (app.api.admin), for the login rate limit shared by every
             # uvicorn worker. ``client`` is the request's client address; rows older than the
             # window are deleted on each attempt.
             """
