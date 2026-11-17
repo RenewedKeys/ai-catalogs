@@ -160,6 +160,17 @@ def create_app(enable_legacy: bool | None = None) -> FastAPI:
     from app.api.admin import check_editor_settings, create_admin_app
 
     check_editor_settings()
+
+    @app.api_route("/admin", methods=["GET", "HEAD", "POST", "OPTIONS"], include_in_schema=False)
+    async def admin_root(request: Request):
+        # The mount below only matches "/admin/..."; without this the bare path would reach the
+        # Stremio catch-all (and its CORS header).
+        from fastapi.responses import JSONResponse, RedirectResponse
+
+        if not settings.ENABLE_EDITOR:
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return RedirectResponse("/admin/", status_code=308)
+
     admin_app = create_admin_app()
     app.mount("/admin", admin_app)
     app.state.admin_app = admin_app

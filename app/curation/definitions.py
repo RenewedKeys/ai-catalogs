@@ -405,7 +405,9 @@ async def apply_dir(
 
 
 def _editor_owned(stored: dict[str, dict[str, Any]], catalog_id: str) -> bool:
-    return (stored.get(catalog_id) or {}).get("source") == "editor"
+    """Managed in the editor; a catalog deleted there releases its id to a file again."""
+    row = stored.get(catalog_id) or {}
+    return row.get("source") == "editor" and row.get("state") != "removed"
 
 
 def _ignore(r: FileResult) -> None:

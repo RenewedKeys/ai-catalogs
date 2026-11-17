@@ -32,7 +32,10 @@
 </details>
 {% endif %}
 
-{% if catalog and not editable %}
+{% if catalog and not editable and catalog.source != "file" %}
+<section class="panel"><p>This catalog was loaded as a fixture (<code>load-fixture</code>); it cannot be edited here.</p></section>
+{% endif %}
+{% if catalog and catalog.source == "file" %}
 <section class="panel">
   <p>This catalog comes from <code>catalogs.d/{{ catalog.catalog_id }}.yaml</code>, which wins until you move the catalog here.
   After the move the editor wins and the file is ignored (delete or rename it then). The move is one-way.</p>
@@ -184,6 +187,7 @@
   <details class="danger-zone">
     <summary>Delete…</summary>
     <p>The catalog leaves the manifest and is marked removed. Its history is kept.</p>
+    {% if file_present %}<p class="warning">catalogs.d/{{ file_present }} exists: once the catalog is deleted here, that file is applied again (within about 30 s) and brings the catalog back as a file catalog.</p>{% endif %}
     <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/state">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">

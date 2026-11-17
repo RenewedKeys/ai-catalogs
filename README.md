@@ -95,7 +95,9 @@ in that browser; changing `SESSION_SECRET` ends every session. After 5 failed lo
 address (or 20 in all) within 15 minutes, logins are refused until the window passes. Behind a
 reverse proxy every request comes from the proxy unless `FORWARDED_ALLOW_IPS` names it, and then
 someone guessing passwords can keep the login locked for you too, so set it and preferably
-restrict `/admin` at the proxy (IP allow-list or VPN).
+restrict `/admin` at the proxy (IP allow-list or VPN). Forms are refused when the browser's
+`Origin` matches neither the `Host` header nor `PUBLIC_BASE_URL`; behind a proxy that rewrites
+`Host`, set `PUBLIC_BASE_URL` or every form (login included) answers 403.
 
 ## Operations: `/ops`
 

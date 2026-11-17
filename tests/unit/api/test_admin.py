@@ -104,7 +104,14 @@ def post_form(client, path, definition_values, **extra):
 def test_disabled_by_default_every_path_404(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_EDITOR", False)
     c = TestClient(create_app(enable_legacy=False), follow_redirects=False)
-    for method, path in [("GET", "/admin/"), ("GET", "/admin/login"), ("POST", "/admin/login"), ("GET", "/admin/x")]:
+    paths = [
+        ("GET", "/admin"),
+        ("GET", "/admin/"),
+        ("GET", "/admin/login"),
+        ("POST", "/admin/login"),
+        ("GET", "/admin/x"),
+    ]
+    for method, path in paths:
         r = c.request(method, path, headers=ORIGIN)
         assert r.status_code == 404
         assert not any(h.startswith("access-control-") for h in r.headers)
@@ -286,6 +293,8 @@ def test_admin_is_outside_stremio_cors(app, authorised):
         login(c)
     add_catalog()
     requests = [
+        ("GET", "/admin"),
+        ("OPTIONS", "/admin"),
         ("GET", "/admin/"),
         ("GET", "/admin/catalogs/alpha_list/status.json"),
         ("GET", "/admin/missing/path"),
@@ -297,6 +306,9 @@ def test_admin_is_outside_stremio_cors(app, authorised):
         headers = {**ORIGIN, "Access-Control-Request-Method": "POST"}
         r = c.request(method, path, headers=headers)
         assert not any(h.lower().startswith("access-control-") for h in r.headers), (method, path)
+        if path == "/admin":
+            assert r.status_code == 308 and r.headers["location"] == "/admin/"
+            continue
         assert r.headers["cache-control"] == "no-store"
         assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
         assert r.headers["x-frame-options"] == "DENY"
@@ -424,6 +436,7 @@ ROUND_TRIP_DEFINITIONS = [
         "focus": None,
     },
     {"prompt": PROMPT, "enabled": False, "on_shortfall": "publish_partial", "min_accept": 80, "position": 3},
+    {"prompt": PROMPT, "languages": "fr", "excluded_genre_ids": [], "min_vote_average": 6.25},
 ]
 
 
@@ -680,3 +693,38 @@ def test_a_new_definition_field_appears_without_editor_changes(monkeypatch):
     monkeypatch.setattr(editor, "CatalogDefinition", extended)
     spec = {s.name: s for s in editor.editor_fields()}["future_floor"]
     assert spec.group == editor.OTHER_GROUP and spec.slider and spec.maximum == 5
+
+
+async def test_deleting_an_editor_catalog_releases_its_id_to_a_file(client, editor_on, tmdb):
+    rev = add_catalog()
+    (editor_on / "alpha_list.yaml").write_text(f"prompt: |\n  {PROMPT}min_runtime: 60\n", encoding="utf-8")
+    report = await apply_dir(editor_on, tmdb_client_factory=tmdb.client)
+    assert [r.status for r in report.files] == ["ignored"]
+    page = client.get("/admin/catalogs/alpha_list").text
+    assert "brings the catalog back as a file catalog" in page
+    r = client.post(
+        "/admin/catalogs/alpha_list/state", data={"csrf": token(client), "state": "removed", "base_rev": rev}
+    )
+    assert r.status_code == 303 and catalog_row("alpha_list")["state"] == "removed"
+    report = await apply_dir(editor_on, tmdb_client_factory=tmdb.client)
+    assert [r.status for r in report.files] == ["accepted"]
+    row = catalog_row("alpha_list")
+    assert (row["source"], row["state"]) == ("file", "enabled")
+    assert json.loads(row["definition_json"])["min_runtime"] == 60
+
+
+def test_fixture_catalog_is_read_only_without_a_move_button(client):
+    add_catalog(source="fixture")
+    page = client.get("/admin/catalogs/alpha_list").text
+    assert "loaded as a fixture" in page and "Move to editor" not in page
+
+
+def test_missing_tmdb_key_is_a_validation_error(client, app, monkeypatch):
+    from app.curation.tmdb_gate import TMDBClient
+
+    monkeypatch.setattr(settings, "TMDB_READ_ACCESS_TOKEN", None)
+    app.state.admin_app.state.tmdb_client_factory = TMDBClient
+    vals = values_for({"prompt": PROMPT, "blacklist_titles": ["Film 3"]})
+    r = post_form(client, "/admin/new", vals, catalog_id="excl", action="save")
+    assert r.status_code == 422 and "could not be resolved on TMDB" in r.text
+    assert catalog_row("excl") is None

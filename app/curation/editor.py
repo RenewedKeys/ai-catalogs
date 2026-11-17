@@ -225,7 +225,8 @@ def to_yaml(value: Any) -> str:
     y.width = 4096
     buf = io.StringIO()
     y.dump(value, buf)
-    return buf.getvalue()
+    text = buf.getvalue()
+    return text[: -len("...\n")] if text.endswith("\n...\n") else text  # a scalar's document end marker
 
 
 def definition_yaml(definition: Mapping[str, Any]) -> str:
@@ -265,6 +266,8 @@ def form_values(definition: Mapping[str, Any]) -> dict[str, str]:
                 out[s.name] = "on" if v else ""
         elif s.kind == "lines" and isinstance(v, list) and all(isinstance(i, (str, int)) for i in v):
             out[s.name] = "\n".join(str(i) for i in v)
+        elif s.kind == "lines" and isinstance(v, (str, int)) and not isinstance(v, bool):
+            out[s.name] = str(v)  # a single value where a list is also accepted (languages: fr)
         elif s.kind in ("text", "textarea", "select") and isinstance(v, str):
             out[s.name] = v
         elif s.kind == "number" and isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -338,6 +341,9 @@ def definition_from_form(form: Mapping[str, Optional[str]], base: Mapping[str, A
             continue
         if s.kind == "bool" and s.name in base and not isinstance(base[s.name], bool) and bool(base[s.name]) == v:
             out[s.name] = base[s.name]
+            continue
+        if s.kind == "lines" and s.name in base and not isinstance(base[s.name], list) and v == [base[s.name]]:
+            out[s.name] = base[s.name]  # unchanged single value: keep its scalar form
             continue
         if s.name not in base and s.default is not None and v == s.default and type(v) is type(s.default):
             continue  # untouched default of an absent key
