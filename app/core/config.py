@@ -58,7 +58,10 @@ class Settings(BaseSettings):
     # API settings
     OPENAI_API_KEY: str | None = Field(default=None)
     OPENAI_BASE_URL: str = Field(default="https://openrouter.ai/api/v1")
-    DEFAULT_MODEL: str = Field(default="openai/gpt-5-mini:online")
+    DEFAULT_MODEL: str = Field(
+        default="google/gemini-3.5-flash-lite",
+        description="Model for curated catalogs (per-catalog `model` overrides it) and legacy",
+    )
     MAX_MODEL_CALLS_PER_DAY: int = Field(
         default=40, ge=0, description="Global cap on outbound model attempts per UTC day (all catalogs)"
     )
