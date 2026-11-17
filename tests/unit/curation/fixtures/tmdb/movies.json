@@ -1,0 +1,60 @@
+{
+  "861": {
+    "id": 861, "imdb_id": "tt0100802", "title": "Total Recall", "original_title": "Total Recall",
+    "original_language": "en", "release_date": "1990-06-01", "status": "Released", "adult": false,
+    "runtime": 113, "vote_average": 7.3, "vote_count": 7900,
+    "genres": [{"id": 28, "name": "Action"}, {"id": 12, "name": "Adventure"}, {"id": 878, "name": "Science Fiction"}],
+    "belongs_to_collection": null,
+    "production_companies": [{"id": 275, "name": "Carolco Pictures"}],
+    "poster_path": "/wVbeL6fkbTKSmNfalj4VoAUUqJv.jpg", "overview": "Construction worker Douglas Quaid dreams of Mars.",
+    "external_ids": {"imdb_id": "tt0100802"},
+    "keywords": {"keywords": [{"id": 3801, "name": "mars"}]},
+    "credits": {"cast": [{"id": 1100, "name": "Arnold Schwarzenegger"}], "crew": [{"id": 10491, "name": "Paul Verhoeven", "job": "Director"}, {"id": 5000, "name": "Someone", "job": "Editor"}]}
+  },
+  "64635": {
+    "id": 64635, "imdb_id": "tt1386703", "title": "Total Recall", "original_title": "Total Recall",
+    "original_language": "en", "release_date": "2012-08-02", "status": "Released", "adult": false,
+    "runtime": 118, "vote_average": 6.2, "vote_count": 8100,
+    "genres": [{"id": 28, "name": "Action"}, {"id": 878, "name": "Science Fiction"}],
+    "belongs_to_collection": null, "production_companies": [{"id": 5, "name": "Columbia Pictures"}],
+    "poster_path": null, "overview": null,
+    "external_ids": {"imdb_id": "tt1386703"}, "keywords": {"keywords": []}
+  },
+  "1091": {
+    "id": 1091, "imdb_id": "tt0084787", "title": "The Thing", "original_title": "The Thing",
+    "original_language": "en", "release_date": "1982-06-25", "status": "Released", "adult": false,
+    "runtime": 109, "vote_average": 8.1, "vote_count": 7300,
+    "genres": [{"id": 27, "name": "Horror"}, {"id": 9648, "name": "Mystery"}, {"id": 878, "name": "Science Fiction"}],
+    "belongs_to_collection": null, "production_companies": [{"id": 33, "name": "Universal Pictures"}],
+    "poster_path": null, "overview": null,
+    "external_ids": {"imdb_id": "tt0084787"}, "keywords": {"keywords": []}
+  },
+  "60935": {
+    "id": 60935, "imdb_id": "tt0905372", "title": "The Thing", "original_title": "The Thing",
+    "original_language": "en", "release_date": "2011-10-12", "status": "Released", "adult": false,
+    "runtime": 103, "vote_average": 6.3, "vote_count": 3200,
+    "genres": [{"id": 27, "name": "Horror"}, {"id": 878, "name": "Science Fiction"}],
+    "belongs_to_collection": null, "production_companies": [{"id": 33, "name": "Universal Pictures"}],
+    "poster_path": null, "overview": null,
+    "external_ids": {"imdb_id": "tt0905372"}, "keywords": {"keywords": []}
+  },
+  "6312": {
+    "id": 6312, "imdb_id": "tt0237534", "title": "Brotherhood of the Wolf", "original_title": "Le Pacte des loups",
+    "original_language": "fr", "release_date": "2001-01-31", "status": "Released", "adult": false,
+    "runtime": 142, "vote_average": 6.9, "vote_count": 1800,
+    "genres": [{"id": 12, "name": "Adventure"}, {"id": 27, "name": "Horror"}],
+    "belongs_to_collection": null, "production_companies": [],
+    "poster_path": null, "overview": null,
+    "external_ids": {"imdb_id": "tt0237534"}, "keywords": {"keywords": []}
+  },
+  "8810": {
+    "id": 8810, "imdb_id": "tt0082694", "title": "Mad Max 2", "original_title": "Mad Max 2",
+    "original_language": "en", "release_date": "1981-12-24", "status": "Released", "adult": false,
+    "runtime": 96, "vote_average": 7.4, "vote_count": 4500,
+    "genres": [{"id": 12, "name": "Adventure"}, {"id": 28, "name": "Action"}, {"id": 53, "name": "Thriller"}, {"id": 878, "name": "Science Fiction"}],
+    "belongs_to_collection": {"id": 8945, "name": "Mad Max Collection"},
+    "production_companies": [{"id": 2537, "name": "Kennedy Miller Productions"}],
+    "poster_path": null, "overview": null,
+    "external_ids": {"imdb_id": "tt0082694"}, "keywords": {"keywords": [{"id": 4458, "name": "post-apocalyptic future"}]}
+  }
+}
