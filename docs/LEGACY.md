@@ -119,7 +119,7 @@ ENCRYPTION_KEY=replace-this-key
 # AI Provider
 OPENAI_API_KEY=your-openai-or-openrouter-key
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
-DEFAULT_MODEL=openai/gpt-5-mini:online
+DEFAULT_MODEL=google/gemini-3.5-flash-lite
 
 # Data sources
 TMDB_API_KEY=your-tmdb-v4-read-token
@@ -157,7 +157,7 @@ These are loaded via Pydantic BaseSettings. Defaults shown are the in-code defau
 | ENCRYPTION_KEY                 | Encryption key for secure, stateless configs (req.) | —                            |
 | OPENAI_API_KEY                 | OpenAI/OpenRouter-compatible API key                | —                            |
 | OPENAI_BASE_URL                | AI gateway base URL                                 | https://openrouter.ai/api/v1 |
-| DEFAULT_MODEL                  | Default model identifier                            | openai/gpt-5-mini:online     |
+| DEFAULT_MODEL                  | Default model identifier                            | google/gemini-3.5-flash-lite |
 | PREFERRED_USER_SEARCH_LANGUAGE | Preferred language for user search queries          | en-US                        |
 | TMDB_API_KEY                   | TMDB v4 Read Access Token                           | —                            |
 | RPDB_API_KEY                   | RatingPosterDB API key (optional)                   | —                            |

@@ -39,7 +39,7 @@ class TestConfig:
         )
 
         assert config.openai_base_url == "https://openrouter.ai/api/v1"
-        assert config.model_name == "openai/gpt-5-mini:online"
+        assert config.model_name == "google/gemini-3.5-flash-lite"
         assert config.max_results == 20
         assert config.use_posterdb is False
         # posterdb_api_key may be set from environment, so we don't assert it's None
