@@ -1,0 +1,41 @@
+[
+  {"query": "Modern", "primary_release_year": 2014, "results": [
+    {"id": 990001, "title": "Modern Life Is Rubbish", "original_title": "Modern Life Is Rubbish", "release_date": "2014-05-02", "vote_count": 210},
+    {"id": 990002, "title": "Modern Girls", "original_title": "Modern Girls", "release_date": "2014-09-12", "vote_count": 1500}
+  ]},
+  {"query": "Modern", "primary_release_year": null, "results": [
+    {"id": 3082, "title": "Modern Times", "original_title": "Modern Times", "release_date": "1936-02-05", "vote_count": 5100},
+    {"id": 990002, "title": "Modern Girls", "original_title": "Modern Girls", "release_date": "2014-09-12", "vote_count": 1500},
+    {"id": 990001, "title": "Modern Life Is Rubbish", "original_title": "Modern Life Is Rubbish", "release_date": "2014-05-02", "vote_count": 210}
+  ]},
+  {"query": "Total Recall", "primary_release_year": 1990, "results": [
+    {"id": 861, "title": "Total Recall", "original_title": "Total Recall", "release_date": "1990-06-01", "vote_count": 7900}
+  ]},
+  {"query": "Total Recall", "primary_release_year": 2012, "results": [
+    {"id": 64635, "title": "Total Recall", "original_title": "Total Recall", "release_date": "2012-08-02", "vote_count": 8100}
+  ]},
+  {"query": "Total Recall", "primary_release_year": null, "results": [
+    {"id": 64635, "title": "Total Recall", "original_title": "Total Recall", "release_date": "2012-08-02", "vote_count": 8100},
+    {"id": 861, "title": "Total Recall", "original_title": "Total Recall", "release_date": "1990-06-01", "vote_count": 7900}
+  ]},
+  {"query": "The Thing", "primary_release_year": 1982, "results": [
+    {"id": 1091, "title": "The Thing", "original_title": "The Thing", "release_date": "1982-06-25", "vote_count": 7300}
+  ]},
+  {"query": "The Thing", "primary_release_year": 2011, "results": [
+    {"id": 60935, "title": "The Thing", "original_title": "The Thing", "release_date": "2011-10-12", "vote_count": 3200}
+  ]},
+  {"query": "The Thing", "primary_release_year": null, "results": [
+    {"id": 1091, "title": "The Thing", "original_title": "The Thing", "release_date": "1982-06-25", "vote_count": 7300},
+    {"id": 60935, "title": "The Thing", "original_title": "The Thing", "release_date": "2011-10-12", "vote_count": 3200},
+    {"id": 990003, "title": "The Thing", "original_title": "The Thing", "release_date": "", "vote_count": 9999}
+  ]},
+  {"query": "Brotherhood of the Wolf", "primary_release_year": 2001, "results": [
+    {"id": 6312, "title": "Brotherhood of the Wolf", "original_title": "Le Pacte des loups", "release_date": "2001-01-31", "vote_count": 1800}
+  ]},
+  {"query": "Le Pacte des loups", "primary_release_year": 2001, "results": [
+    {"id": 6312, "title": "Brotherhood of the Wolf", "original_title": "Le Pacte des loups", "release_date": "2001-01-31", "vote_count": 1800}
+  ]},
+  {"query": "Mad Max 2", "primary_release_year": 1981, "results": [
+    {"id": 8810, "title": "Mad Max 2", "original_title": "Mad Max 2", "release_date": "1981-12-24", "vote_count": 4500}
+  ]}
+]

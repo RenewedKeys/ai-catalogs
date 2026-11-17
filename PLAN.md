@@ -5,9 +5,11 @@ implementation). Milestone 1 is implemented; see section 16 for its status.
 
 ## 0. Goal and fixed decisions
 
-Self-hosted, single-user Stremio catalog addon that serves a daily-rotating, 100-movie
-list (cult / action / sci-fi, 1980 to present) through a manifest URL imported into
-AIOMetadata. The owner has already decided:
+Self-hosted Stremio catalog addon: a tool for defining any number of catalogs, each a
+daily-rotating, LLM-generated movie list with its own prompt and filters, served through a
+manifest URL imported into AIOMetadata. The code carries no particular catalog's prompt,
+preferences or exclusion lists; those live only in the operator's own catalog definitions
+(and secrets only in `.env`). The owner has already decided:
 
 - Base: fork of `willtho89/stremio-ai-companion` (Python, FastAPI, MIT; authors gave permission).
 - Cherry-pick OpenRouter ideas from `itcon-pty-au/stremio-ai-search` (Node, MIT).
@@ -301,13 +303,22 @@ retried via `not_before` (5 / 15 / 45 min) for transient causes only (network, 4
 timeout). Non-transient causes (401/402/403, schema of the catalog invalid, budget
 exhausted) fail immediately with no retry.
 
-## 6. Prompt templating and the seed catalog (`app/curation/prompt.py`, `catalogs.d/`)
+## 6. Prompt templating and catalog definitions (`app/curation/prompt.py`, `catalogs.d/`)
 
 - Jinja2 `SandboxedEnvironment`, `StrictUndefined`. A YAML file fails validation (and the
   old definition stays in force) unless the template renders against a sample context.
 - Variables: `today`, `weekday`, `day_of_month`, `month_name`, `year`, `seed`,
   `target_count`, `request_count`, `focus`, `categories` (shuffled), `anchors` (shuffled),
-  `exclusions` (rendered block), `already_this_run`, `unmet` (top-up rounds).
+  `exclusions` (rendered block), `already_this_run`, `unmet` (top-up rounds), and
+  `limits` (below).
+- **Limits feed the prompt as well as the gate.** The purpose of the tool is accurate
+  catalogs from complex free-form prompts plus adjustable limits (sliders in the v2
+  editor). Every limit a catalog sets (rating and vote floor, year range, runtime,
+  languages, excluded genres, caps, quotas) is (1) rendered into a plain-language
+  constraints block appended to the prompt, so the model aims inside the limits and fewer
+  generations are wasted, and (2) enforced in code by the gatekeeper and selection, which
+  remain the guarantee. One source of truth: both are generated from the same definition
+  fields, and the template can also reference them directly (e.g. `{{ limits.year_min }}`).
 - `seed` = hash(date, catalog id, per-run random nonce); it drives the category/anchor
   shuffle, the per-category "angle" hint, and the final shuffle, and is stored in `runs`.
 - Prompt-side history exclusion: at most `history_prompt_limit` (default 150) most recent
@@ -316,34 +327,36 @@ exhausted) fail immediately with no retry.
 - Rendered prompt size is capped (default 24k chars); over the cap, the exclusion block
   is truncated first.
 
-Seed catalog `catalogs.d/daily-cult-picks.yaml`, with every requirement of the owner's
-refined master prompt classified:
+A catalog definition (one YAML file per catalog in `catalogs.d/`, written by the operator
+and not committed with the tool) carries everything specific to that catalog. Every field
+except the prompt is optional and off or neutral unless set:
 
-| Requirement | Where enforced | Kind |
+| Field | Where enforced | Kind |
 |---|---|---|
-| 8 taste anchors excluded from output | `blacklist_titles` -> resolved once to `tmdb_id`s by `scripts/resolve_blacklist.py`, stored in the YAML as `blacklist_tmdb_ids` | hard (code) |
-| Overused defaults (Upgrade, Dredd, The Thing, Total Recall, Demolition Man, Pitch Black, Edge of Tomorrow, Big Trouble in Little China, They Live, Escape from New York, Escape from L.A.) | same | hard (code) |
-| Overused action/sci-fi (Face/Off, The Rock, Broken Arrow, Overlord, Pandorum, Equilibrium, Lockout, Deep Rising, Dog Soldiers, Slither, Galaxy Quest, Reign of Fire, The Running Man, Last Action Hero) | same | hard (code) |
-| B-movie filler list (Hardware, Cyborg, Nemesis, Split Second, Fortress, Leviathan, DeepStar Six, Virus, Scanner Cop, Project Shadowchaser, Eliminators, Steel Dawn, Hell Comes to Frogtown, Robot Jox) | same (most also fail the rating/vote floor) | hard (code) |
-| Mega-franchises (Marvel, DC, Star Wars, Star Trek, Fast & Furious, Jurassic Park, Transformers, Alien, Terminator, Mission: Impossible, John Wick, Mad Max) | `franchise_denylist`: TMDB collection ids + production-company ids (Marvel Studios, DC Films/DC Studios, Lucasfilm) + TMDB keyword ids (e.g. "marvel cinematic universe", "dc extended universe") + title regexes, resolved by the same script and reviewed by the owner; also stated in the prompt | hard (code), best-effort completeness — the reviewed id list is the definition |
-| English-language only | `original_language == en` | hard |
-| No animation / anime / kids / TV movies / shorts | genre ids 16, 10770, 10751 excluded; runtime >= 70 | hard |
-| No direct-to-video / VHS schlock | vote_count >= 1000 and vote_average >= 6.2 as proxy; stated in prompt | hard proxy + advisory |
-| Rating floor (prompt says IMDb 6.5+ / 25k votes) | TMDB `vote_average >= 6.2`, `vote_count >= 1000` (the spec's code thresholds; TMDB has no IMDb data) | hard, TMDB-based |
-| 1980 to present | release year in [1980, current year] | hard |
-| Max 1 per franchise | max 1 per TMDB collection | hard |
-| Max 2 per director | `director_cap: 2`, costs one credits call per candidate (cached); **on** for the seed | hard |
-| Equal decade balance | `decade_min`: at least 12 of 100 per decade 1980s..2020s | hard quota |
-| 8 categories at 12-13 each | LLM-reported `category`; `category_min: 6` each | soft quota: used to rank selection and to steer top-ups, but never fails a run, because the label is the model's own claim |
-| Shuffled, no headers, flat list | JSON schema + code shuffle | hard |
-| "Use Google Search Grounding for today's date" | removed; date injected | n/a |
+| `prompt` (Jinja2 template; may name examples to avoid, "taste anchors", focus) | LLM | advisory |
+| `blacklist_titles` (titles, optional years) -> resolved to `blacklist_tmdb_ids` | gatekeeper | hard (code) |
+| `franchise_denylist` (franchise/collection names, company names, keyword names, title regexes) -> resolved to TMDB ids | gatekeeper | hard (code), best-effort completeness |
+| `languages` (original_language allow-list) | gatekeeper | hard |
+| `excluded_genre_ids` | gatekeeper | hard |
+| `min_runtime` (missing runtime rejects when set) | gatekeeper | hard |
+| `min_vote_average`, `min_vote_count` (TMDB rating floor; a slider in the v2 editor) | gatekeeper | hard |
+| `year_min`, `year_max` | gatekeeper | hard |
+| `max_per_collection` | selection | hard |
+| `director_cap` (costs one cached credits call per candidate) | selection | hard |
+| `decade_min` | selection | hard quota |
+| `category_min` (LLM-reported `category`) | selection | soft quota: ranks selection and steers top-ups, never fails a run, because the label is the model's own claim |
+| shuffled flat list | JSON schema + code shuffle | hard |
+
+Exclusion names (`blacklist_titles`, `franchise_denylist`) are resolved to TMDB ids
+automatically when a definition is applied, with the same resolver as the gatekeeper;
+`scripts/resolve_blacklist.py` exposes that resolution for inspection only.
 
 The YAML also carries: `model`, `temperature`, `max_tokens`, `timeout_s`,
-`target_count: 100`, `overgenerate_factor: 1.6`, `schedule` (cron + timezone),
-`history_window_runs: 7`, `history_mode: strict`, `on_shortfall: fail`,
-`max_model_calls_per_run: 8`, `max_runs_per_day: 4`, filter thresholds, `weekday_focus`.
-The full template text is the owner's section-4 master prompt with the grounding line and
-plain-text output rules removed and quotas reworded as "at least".
+`target_count` (default 100), `overgenerate_factor` (default 1.6), `schedule` (cron +
+timezone), `history_window_runs` (default 7), `history_mode` (default `strict`),
+`on_shortfall` (default `fail`), `max_model_calls_per_run` (default 8),
+`max_runs_per_day` (default 4), `weekday_focus`. Today's date is injected into the
+template, so prompts need no search grounding for it.
 
 ## 7. LLM layer and spend control (`app/curation/llm.py`, `app/curation/budget.py`)
 
@@ -385,13 +398,14 @@ plain-text output rules removed and quotas reworded as "at least".
   +/- 1, then without year. Acceptable = normalised `title` or `original_title` equals
   the LLM title or similarity >= 0.9, and release year within +/- 1. Among acceptable
   candidates take the highest `vote_count`. Otherwise reject `no_match`; never `results[0]`.
-- Hard filters on details (`append_to_response=external_ids,keywords[,credits]`), per
-  catalog: `runtime >= 70` (missing -> reject); `vote_average >= 6.2`;
-  `vote_count >= 1000`; `original_language == "en"`; genres exclude 16, 10770 (+10751, 99
-  for the seed); release year within range; `adult == false`; `status == "Released"`;
-  IMDb id present and matching `^tt\d+$`; not in `blacklist_tmdb_ids`; not matched by
-  `franchise_denylist`.
-- Tests use recorded fixtures including "Modern (2014)", same-title remakes
+- Hard filters on details (`append_to_response=external_ids,keywords[,credits]`), each a
+  per-catalog parameter that is off unless the catalog sets it (section 6): minimum
+  runtime (missing -> reject when set), minimum `vote_average` and `vote_count`,
+  `original_language` allow-list, excluded genres, release-year range,
+  `blacklist_tmdb_ids`, `franchise_denylist`. Always enforced, because the addon cannot
+  serve the film otherwise: `adult == false`, `status == "Released"`, IMDb id present and
+  matching `^tt\d+$`.
+- Tests use fixtures including "Modern (2014)", same-title remakes
   (Total Recall 1990/2012, The Thing 1982/2011), alias pairs, and a film with no collection.
 
 ## 9. Serving for AIOMetadata (`app/api/curated.py`)
@@ -584,7 +598,7 @@ Secrets and tokens:
    and periodic (every minute) recovery; `/ops` sub-app (webhook + status); backup; the
    worker's real health check replaces the placeholder and the compose smoke test also
    asserts lease ownership and release.
-7. Seed catalog tuning over a week of real runs; rerun the integration matrix.
+7. Tune the operator's first catalogs over a week of real runs; rerun the integration matrix.
 8. (v2) Browser editor, dry-run UI, rollback UI.
 
 ## 15. Open items for the owner
@@ -593,9 +607,8 @@ Secrets and tokens:
 - v1 edits prompts in a YAML file plus webhook/CLI; the browser editor is milestone 8.
 - Defaults `history_mode: strict`, `on_shortfall: fail`, window 7: on a bad day the list
   stays as yesterday's instead of repeating or shrinking. Alternative: opt into `relax`.
-- Rating floor is TMDB-based (6.2 / 1,000 votes), not IMDb 6.5 / 25k; an IMDb floor
-  would need another data source.
-- Review the generated franchise denylist ids once.
+- Rating floors are TMDB-based; an IMDb floor would need another data source (IMDb's
+  daily ratings dataset is the candidate).
 - Default model, chosen after the probe script.
 
 ## 16. Milestone 1 status
