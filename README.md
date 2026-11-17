@@ -4,8 +4,8 @@ Self-hosted Stremio catalog addon that serves curated, daily-rotating movie list
 by an LLM and checked against TMDB, meant to be imported into
 [AIOMetadata](https://github.com/cedya77/aiometadata) as a custom manifest.
 
-> **Status: milestone 5 of 8.** Catalogs are defined in YAML and refreshed on demand with
-> `python -m app.curation run`; the scheduled worker arrives in milestone 6.
+> **Status: milestone 6 of 8.** Catalogs are defined in YAML and refreshed on their schedule
+> by the worker; next is tuning real catalogs (milestone 7).
 > [PLAN.md](PLAN.md) has the design and the milestones.
 
 ## What works today
@@ -22,8 +22,11 @@ by an LLM and checked against TMDB, meant to be imported into
 - `python -m app.curation load-fixture PATH` publishes a list from a JSON file
   ([fixtures/test_catalog_100.json](fixtures/test_catalog_100.json) is 100 test films).
 - `GET /healthz`
-- Two Compose services from one image: `web`, and a `worker` that is a placeholder until the
-  scheduler is built (milestone 6).
+- The worker: applies `catalogs.d` on start and whenever a file changes, refreshes each catalog
+  on its `schedule` (cron + timezone), catches up at start (a scheduled catalog with no list,
+  or one older than its interval, gets one run), recovers runs a crashed process left behind,
+  takes a nightly backup, and stops cleanly on `docker compose stop`.
+- `/ops`: webhooks to queue a refresh or dry run, and a status page (below).
 - The upstream addon (configure page, AI search, feed catalogs), **off by default**. See
   [docs/LEGACY.md](docs/LEGACY.md).
 
@@ -38,11 +41,72 @@ Run these inside the worker container (`docker compose exec worker python -m app
 | `run ID [--dry-run]` | Apply, then refresh one catalog now (`--dry-run`: everything except publishing) |
 | `rollback ID SNAPSHOT` | Serve an earlier list again |
 | `history clear ID` | Let previously shown titles appear again |
+| `status [--json]` | Catalogs, active lists, recent runs, next runs, budget, worker heartbeat |
+| `status --check` | Exit 0 if this container's worker is alive (the worker's health check) |
+| `backup PATH` | Online copy of the database, safe while everything runs |
 
 A run that cannot deliver `target_count` qualifying, unrepeated films keeps the previous list
 (`history_mode` and `on_shortfall` in the definition change that). Model calls are limited per
 run (`max_model_calls_per_run`, default 8) and per day across all catalogs
 (`MAX_MODEL_CALLS_PER_DAY`, default 40).
+
+## Schedules
+
+A definition's `schedule` is a five-field cron expression on the catalog's local time:
+
+```yaml
+schedule:
+  cron: "0 6 * * *"
+  timezone: "Europe/Berlin"   # default UTC
+```
+
+Daylight saving time: a time that does not exist on the spring-forward day (02:30 when clocks
+jump from 02:00 to 03:00) runs after the jump, shifted by the gap (03:30); a time that occurs
+twice on the autumn day runs once, at the first occurrence. The next run time is stored, so a
+restart neither skips nor repeats a run; runs missed while the worker was down add up to one
+run. A catalog without a schedule refreshes only when asked (CLI or `/ops`). Each refresh
+still counts against `max_runs_per_day` and the daily model-call budget.
+
+## Operations: `/ops`
+
+Set `OPS_TOKEN` in `.env` to enable it (unset, every `/ops` path answers 404). Every request
+needs the header `Authorization: Bearer <OPS_TOKEN>`; the token is never accepted in a URL.
+
+```bash
+curl -X POST -H "Authorization: Bearer $OPS_TOKEN" https://catalogs.example.org/ops/catalogs/my_list/refresh
+```
+
+| Request | Result |
+|---|---|
+| `POST /ops/catalogs/<id>/refresh` | Queues a refresh: 202, or 409 (a job is already queued), 429 (`max_runs_per_day` reached), 404 |
+| `POST /ops/catalogs/<id>/dry-run` | Queues a dry run (everything except publishing) |
+| `GET /ops/status` | JSON: per catalog the active list's age and size, recent runs with stage counts and reject reasons, definition errors, next run; model calls used today; worker heartbeat; latest backup |
+| `GET /ops/status` with `Accept: text/html` (or `?format=html`) | The same as a small HTML page, e.g. behind a reverse proxy that adds the header |
+
+The webhooks only queue work; the worker runs it. `/ops` sends no CORS headers, so browsers on
+other sites cannot read it.
+
+## Backups
+
+The worker writes `nightly-<time>.sqlite` once a day and the database writes
+`pre-migration-v<N>-<time>.sqlite` before every schema upgrade, both into `BACKUP_DIR` (default
+`/data/backups` on the volume); the newest 7 of each kind are kept. For a copy outside the
+volume:
+
+```bash
+docker compose exec worker python -m app.curation backup /data/backups/manual.sqlite
+```
+
+```bash
+docker compose cp worker:/data/backups/manual.sqlite ./ai-catalogs-backup.sqlite
+```
+
+Never copy the live `.sqlite` file itself: recent changes live in its `-wal` file. To restore:
+`docker compose stop`, replace `/data/ai-catalogs.sqlite` with the backup and delete
+`ai-catalogs.sqlite-wal` and `-shm` next to it, then `docker compose start`.
+
+What to keep where: `catalogs.d/` is configuration (keep it in your own git repository or back
+it up as files); the database is the full state (published lists, history, runs, budget).
 
 ## Add it to AIOMetadata
 
@@ -85,6 +149,8 @@ form, so whoever holds that URL can spend them through this server.
 | `TMDB_API_KEY` | TMDB v4 read access token |
 | `PUBLIC_BASE_URL` | Externally reachable URL of this server |
 | `ADDON_ACCESS_TOKEN` | Secret path segment of the addon URLs (16+ characters); unset means `public` |
+| `OPS_TOKEN` | Bearer token for `/ops`; unset disables it |
+| `BACKUP_DIR`, `BACKUP_KEEP` | Automatic backups; default `/data/backups`, 7 of each kind |
 | `DATABASE_PATH` | SQLite file; default `/data/ai-catalogs.sqlite` on the compose volume, which must be a local disk |
 | `ENABLE_LEGACY` | `true` mounts the upstream addon routes; needs `ENCRYPTION_KEY`. Trusted networks only |
 
@@ -102,7 +168,8 @@ To run the web server outside Docker, point `DATABASE_PATH` somewhere writable, 
 `DATABASE_PATH=./data/dev.sqlite`.
 
 `sh scripts/compose_smoke.sh` builds the image and checks both services start, serve and stop
-cleanly (needs Docker; CI runs it).
+cleanly, that the worker holds the lease, turns healthy and releases the lease when stopped
+(needs Docker; CI runs it).
 
 ## Credits and licence
 

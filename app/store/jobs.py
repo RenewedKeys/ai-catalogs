@@ -11,7 +11,7 @@ write anything for a job that another process has since recovered or reclaimed; 
 
 Who calls what:
     acquire_lease / renew_lease / release_lease   the runner and its heartbeat task
-    enqueue_job                                   scheduler, webhook, CLI (no lease needed)
+    enqueue_job / admit_job                       scheduler, webhook, CLI (no lease needed)
     claim_job, heartbeat, finish_*, commit_run    the lease holder only
     recover_abandoned                             the lease holder, at start and every minute
 
@@ -169,17 +169,31 @@ def enqueue_job(
     The daily limit counts runs started in the last 24 hours (UTC-independent).
     """
     with transaction(conn):
-        state = conn.execute("SELECT state FROM catalog_defs WHERE catalog_id = ?", (catalog_id,)).fetchone()
-        if state is None or state["state"] != "enabled":
-            return Enqueued.NOT_ENABLED, None
-        if max_runs_per_day is not None:
-            started = conn.execute(
-                "SELECT COUNT(*) FROM runs WHERE catalog_id = ? AND started_at >= ? AND dry_run = 0",
-                (catalog_id, now_ms() - DAY_MS),
-            ).fetchone()[0]
-            if kind == "refresh" and started >= max_runs_per_day:
-                return Enqueued.DAILY_LIMIT, None
-        job_id = _insert_job(conn, catalog_id, kind, trigger, now_ms())
+        return admit_job(conn, catalog_id, kind=kind, trigger=trigger, max_runs_per_day=max_runs_per_day)
+
+
+def admit_job(
+    conn: sqlite3.Connection,
+    catalog_id: str,
+    *,
+    kind: str = "refresh",
+    trigger: str = "manual",
+    max_runs_per_day: Optional[int] = None,
+) -> tuple[Enqueued, Optional[int]]:
+    """``enqueue_job`` inside the caller's transaction (the scheduler advances its row with it)."""
+    if not conn.in_transaction:
+        raise RuntimeError("admit_job() needs an open transaction")
+    state = conn.execute("SELECT state FROM catalog_defs WHERE catalog_id = ?", (catalog_id,)).fetchone()
+    if state is None or state["state"] != "enabled":
+        return Enqueued.NOT_ENABLED, None
+    if max_runs_per_day is not None and kind == "refresh":
+        started = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE catalog_id = ? AND started_at >= ? AND dry_run = 0",
+            (catalog_id, now_ms() - DAY_MS),
+        ).fetchone()[0]
+        if started >= max_runs_per_day:
+            return Enqueued.DAILY_LIMIT, None
+    job_id = _insert_job(conn, catalog_id, kind, trigger, now_ms())
     if job_id is None:
         return Enqueued.ALREADY_OPEN, None
     return Enqueued.QUEUED, job_id

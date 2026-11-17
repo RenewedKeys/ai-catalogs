@@ -686,3 +686,53 @@ Implemented on branch `milestone-5-pipeline`:
 - Not done here (milestone 6): worker loop, schedule/catch-up, periodic recovery, `/ops`,
   `status`, `backup`.
 
+
+## 19. Milestone 6 status
+
+Implemented on branch `milestone-6-worker`:
+
+- `app/worker.py`: the long-lived loop around `app.curation.runner.Runner` (no second job
+  path). Start: apply `catalogs.d`, take the lease (waiting out at most one TTL), catch-up.
+  Every `WORKER_TICK_S` (30 s): re-apply on SIGHUP or when a file's name/mtime/size changes
+  (and every 10 minutes while the last apply left a file unapplied, e.g. TMDB down), recover
+  abandoned jobs, queue due scheduled jobs, take the nightly backup when due, then run jobs
+  one at a time. SIGTERM/SIGINT: stop claiming, cancel the run (also when the signal lands
+  while a job is being claimed), stop the heartbeat, release the lease, exit 0. A lost lease
+  stops claims; the loop re-acquires every tick. A live holder (a CLI run) is waited for.
+- `app/curation/schedule.py`: `schedule: {cron, timezone}` validated on apply (five-field
+  cron only, no `@` nicknames, seconds, random `R` or hashed `H` fields; IANA zone, default
+  UTC; a cron that never fires is an error). Fire times are evaluated on local wall-clock time:
+  a time in a spring gap fires after the gap, shifted by its length; a time in an autumn
+  overlap fires once, at its first occurrence. `schedule.next_run_at` is persisted; a due fire
+  is admitted and `next_run_at` advanced from now in **one transaction** (`jobs.admit_job`,
+  split out of `enqueue_job`), whatever the admission result, so missed fires never pile up.
+  No migration was needed: an edited schedule is detected because the stored time is no
+  longer a fire time of the current expression. Catch-up (one job if there is no active
+  snapshot or it is older than the interval between the next two fires) runs at start and
+  for a catalog that just got a schedule row. Catalogs without a schedule (and fixture
+  catalogs) are never scheduled or caught up: they refresh only via CLI or `/ops`.
+- `app/api/ops.py`: the `/ops` sub-app without CORS, mounted inside `create_app()` before the
+  Stremio catch-all. A middleware runs before routing: `OPS_TOKEN` unset -> 404 for every
+  path; wrong/missing bearer -> 401 for every path, including unknown ones; constant-time
+  compare of UTF-8 bytes. Webhooks only enqueue (202 / 409 open job / 429 daily limit / 404).
+  `GET /ops/status` is JSON, or HTML with `Accept: text/html` / `?format=html`; every value is
+  escaped and no definition content (prompts) is shown. Tests: authorised, unauthorised,
+  missing path and preflight, each with `Origin`, none with an `Access-Control-*` header; the
+  sentinel sweep now includes `OPS_TOKEN` and authorised `/ops` responses after a failed run.
+- `app/curation/status.py`: shared by `/ops/status` and CLI `status [--json]`. The worker
+  heartbeat is the lease renewal (`expires_at - TTL`), so no new table. `status --check`
+  passes only while a process whose owner is `worker-<this hostname>-` holds an unexpired
+  lease (a CLI run does not count); it is the worker's compose health check (start period
+  120 s > lease TTL).
+- `app/store/backup.py`: CLI `backup PATH` (`sqlite3.Connection.backup`, temp file + rename);
+  `nightly-*` by the worker and `pre-migration-v<N>-*` by `db.migrate` itself (any process
+  that upgrades a non-empty database; a failed backup stops the upgrade), `BACKUP_KEEP` (7)
+  per kind in `BACKUP_DIR` (default `<database dir>/backups`); manual backups are never
+  pruned. Restore test: back up, mutate, restore, same active snapshot and history.
+- Dependencies (pure Python wheels, so they install on `python:3.15-alpine`): `croniter`,
+  its dependency `python-dateutil`, `tzdata`.
+- `scripts/compose_smoke.sh` also asserts the worker holds the lease, its health check turns
+  healthy, and after `docker compose stop` the lease is released (read from a one-off
+  container on the same volume).
+- Next (milestone 7): tune the operator's first catalogs over a week of real runs and rerun
+  the integration matrix.

@@ -6,6 +6,7 @@ Layout:
     app (parent)                      no CORS
       /healthz, /static
       legacy web UI (/configure ...)  only when ENABLE_LEGACY is true
+      /ops                            sub-app, no CORS, bearer OPS_TOKEN (404 when unset)
       mounted last, at "":
         stremio_app                   CORS: any origin, GET only, no credentials
           curated catalog routes      /c/{token}/...
@@ -16,7 +17,8 @@ returns is shadowed by it. Register /ops and /admin (each its own sub-app, witho
 inside create_app(), before the final mount.
 
 Only the routes Stremio clients and AIOMetadata fetch cross-origin get CORS headers. Anything
-registered on the parent (and, later, /ops) is never readable from another origin.
+registered on the parent, and /ops (mounted before the catch-all), is never readable from
+another origin.
 """
 
 import re
@@ -145,6 +147,12 @@ def create_app(enable_legacy: bool | None = None) -> FastAPI:
 
         app.include_router(web_router)
         stremio_app.include_router(stremio_router)
+
+    # Operations: its own sub-app without CORS, mounted before the catch-all so its unknown
+    # paths and preflights never reach the Stremio CORS middleware.
+    from app.api.ops import create_ops_app
+
+    app.mount("/ops", create_ops_app())
 
     # Mounted last so every parent route above takes precedence.
     app.mount("", stremio_app)

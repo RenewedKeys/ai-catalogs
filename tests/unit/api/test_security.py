@@ -6,6 +6,7 @@ Security regression tests for milestone 1 (PLAN.md, sections 3 and 10):
   base URL other than the one it was stored for
 - the legacy surface is not mounted by default
 - CORS headers are only sent by the Stremio sub-app
+- authorised /ops responses (status JSON and HTML, webhooks) carry no secret either
 """
 
 import json
@@ -25,6 +26,7 @@ SENTINELS = {
     "RPDB_API_KEY": "SENTINEL-rpdb-0123456789",
     "ENCRYPTION_KEY": "SENTINEL-encryption-0123456789",
     "ADDON_ACCESS_TOKEN": "SENTINELaddontoken0123456789",
+    "OPS_TOKEN": "SENTINEL-ops-token-0123456789",
 }
 # Credentials a user typed into the form themselves; they live inside the encrypted config.
 USER_SECRETS = {
@@ -336,3 +338,34 @@ def test_routes_added_after_create_app_would_be_shadowed():
     """
     app = create_app(enable_legacy=False)
     assert app.routes[-1].path == "" and app.routes[-1].app is app.state.stremio_app
+
+
+def test_authorised_ops_responses_reveal_no_secret(secrets, caplog):
+    """The status page after failed runs, with every secret set: only controlled values come back."""
+    from app.store.catalogs import accept_definition
+    from app.store.db import now_ms, session, transaction
+
+    _load_fixture_catalog()
+    with session() as conn, transaction(conn):
+        rev = accept_definition(conn, "sweep_two", "Sweep two", {"prompt": "p", "schedule": {"cron": "0 6 * * *"}})
+        conn.execute(
+            "INSERT INTO runs (catalog_id, config_rev, epoch, trigger, started_at, status, error_category, "
+            "error_status) VALUES ('sweep_two', ?, 0, 'schedule', ?, 'failed', 'provider_auth', 401)",
+            (rev, now_ms()),
+        )
+    client = TestClient(create_app(enable_legacy=False))
+    auth = {"Authorization": f"Bearer {SENTINELS['OPS_TOKEN']}", "Origin": "https://example.org"}
+    responses = [
+        client.get("/ops/status", headers=auth),
+        client.get("/ops/status", headers={**auth, "Accept": "text/html"}),
+        client.post("/ops/catalogs/sweep_two/refresh", headers=auth),
+        client.post("/ops/catalogs/sweep_two/dry-run", headers=auth),
+        client.post("/ops/catalogs/missing/refresh", headers=auth),
+        client.get("/ops/status", headers={"Authorization": "Bearer wrong"}),
+    ]
+    assert [r.status_code for r in responses] == [200, 200, 202, 409, 404, 401]
+    assert "provider_auth" in responses[0].text
+    for r in responses:
+        _assert_clean(r, secrets, r.request.url.path)
+    for secret in secrets:
+        assert secret not in caplog.text

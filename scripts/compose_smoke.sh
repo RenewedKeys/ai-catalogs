@@ -2,11 +2,13 @@
 # Compose smoke test (PLAN.md, section 12). Needs Docker with the compose plugin.
 #
 #   web     PID 1 is uvicorn and /healthz answers 200
-#   worker  PID 1 is the worker module and it publishes no port
+#   worker  PID 1 is the worker module, it publishes no port, it holds the lease and its
+#           health check (status --check) turns healthy
 #   store   the web workers create the database on the volume (racing on first start), the
 #           curated manifest is empty, a fixture loaded with the CLI is served whole at
 #           offset 0 and empty at skip=100, and it survives a container restart
-#   stop    both stop within the grace period (worker exits 0; web exits 0 or 143)
+#   stop    both stop within the grace period (worker exits 0; web exits 0 or 143) and the
+#           worker releases the lease
 #
 # Isolated from any real deployment in this directory: it runs under its own Compose
 # project name (so `down -v` only removes this run's containers and volume), builds its own
@@ -62,6 +64,33 @@ if [ -n "$worker_ports" ]; then
 fi
 echo "ok: worker publishes no port"
 
+# The worker takes the lease at start (fresh volume: nobody to wait for).
+lease_field() { python3 -c "import json, sys; print(json.load(sys.stdin)['worker'][sys.argv[1]])" "$1"; }
+i=0
+until [ "$(dc exec -T worker python -m app.curation status --json | lease_field holder)" = "worker" ]; do
+    i=$((i + 1))
+    if [ "$i" -gt 60 ]; then
+        echo "worker did not take the lease" >&2
+        dc exec -T worker python -m app.curation status >&2 || true
+        dc logs worker >&2
+        exit 1
+    fi
+    sleep 1
+done
+echo "ok: worker holds the lease"
+
+# Its health check is `status --check`; the first check runs one interval (30 s) after start.
+i=0
+until [ "$(docker inspect -f '{{.State.Health.Status}}' "$(dc ps -q worker)")" = "healthy" ]; do
+    i=$((i + 1))
+    if [ "$i" -gt 90 ]; then
+        echo "worker health: $(docker inspect -f '{{json .State.Health}}' "$(dc ps -q worker)")" >&2
+        exit 1
+    fi
+    sleep 1
+done
+echo "ok: worker health check is healthy"
+
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/configure")
 [ "$code" = "404" ] || { echo "/configure answered $code with legacy off" >&2; exit 1; }
 echo "ok: legacy routes are not mounted"
@@ -115,3 +144,8 @@ case "$code" in
     *) echo "web exited with $code" >&2; exit 1 ;;
 esac
 echo "ok: both services stopped cleanly in ${elapsed}s"
+
+# The stopped worker released its lease: read it from a one-off container on the same volume.
+held=$(dc run --rm --no-deps -T worker python -m app.curation status --json | lease_field lease_held)
+[ "$held" = "False" ] || { echo "lease still held after stop: $held" >&2; exit 1; }
+echo "ok: worker released the lease on stop"

@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     CURATED_ADDON_NAME: str = Field(default="AI Catalogs", description="Manifest name of the curated addon")
     CATALOGS_DIR: str = Field(default="catalogs.d", description="Directory of catalog definition files (*.yaml)")
     RUN_WALL_CLOCK_S: int = Field(default=1200, ge=10, description="Wall-clock cap of one refresh run, in seconds")
+    BACKUP_DIR: str | None = Field(
+        default=None, description="Automatic backups (nightly, before migrations). Unset: <database dir>/backups"
+    )
+    BACKUP_KEEP: int = Field(default=7, ge=1, description="Automatic backups kept per kind")
+    WORKER_TICK_S: float = Field(default=30.0, gt=0, description="Worker loop period, in seconds")
+    OPS_TOKEN: str | None = Field(
+        default=None, description="Bearer token for /ops (header only). Unset: /ops answers 404"
+    )
 
     # Legacy (upstream stremio-ai-companion) surface: /configure, /save-config, /config/{blob}/...
     # Off by default. Only enable it on a trusted network.
