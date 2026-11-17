@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     )
     CURATED_ADDON_ID: str = Field(default="community.curated-catalogs", description="Manifest id of the curated addon")
     CURATED_ADDON_NAME: str = Field(default="AI Catalogs", description="Manifest name of the curated addon")
+    CATALOGS_DIR: str = Field(default="catalogs.d", description="Directory of catalog definition files (*.yaml)")
+    RUN_WALL_CLOCK_S: int = Field(default=1200, ge=10, description="Wall-clock cap of one refresh run, in seconds")
 
     # Legacy (upstream stremio-ai-companion) surface: /configure, /save-config, /config/{blob}/...
     # Off by default. Only enable it on a trusted network.

@@ -1,0 +1,67 @@
+# Example catalog definition (format reference, not a real catalog).
+#
+# Copy it to catalogs.d/<catalog_id>.yaml on the server; the file name is the catalog id
+# (lowercase letters and digits joined by "_"). catalogs.d/ is the operator's own config and
+# is never committed to this repository.
+#
+# Only `prompt` is required. Every limit below is OFF unless you set it; each one you set is
+# both written into the prompt as a plain-language constraint and enforced in code.
+
+name: Example Catalog          # shown in the manifest; default: from the file name
+enabled: true                  # false keeps the definition but hides the catalog
+
+# Jinja2 template. Variables include today, weekday, month_name, year, seed, target_count,
+# request_count, focus, categories, anchors and limits (e.g. {{ limits.year_min }}). Blocks
+# you do not place yourself (constraints, unmet quotas, already-suggested titles, recent
+# history) are appended after the template.
+prompt: |
+  Suggest {{ request_count }} feature films for a catalog called "Example Catalog".
+  Today is {{ weekday }}, {{ today }}. Vary the picks using this seed: {{ seed }}.
+  {% if focus %}Today's focus: {{ focus }}.{% endif %}
+  Spread the picks over these categories: {{ categories | join(", ") }}.
+
+categories: [alpha, beta, gamma]   # shuffled per run; also used by category_min
+anchors: []                        # optional "taste anchor" titles, shuffled per run
+weekday_focus: {}                  # e.g. {friday: "something light"}
+
+# Never show these. Names are resolved to TMDB ids automatically when the file is applied:
+# a title with a year picks the most-voted exact match within +/- 1 year; a bare title
+# blocks every film of exactly that name; franchise names match TMDB collections,
+# companies and keywords. Unmatched names are reported by `apply`.
+blacklist_titles: ["Title A", "Title B (1999)"]
+franchise_denylist:
+  collections: ["Saga X"]
+  companies: []
+  keywords: []
+  title_patterns: []           # regular expressions on the title
+
+# Hard limits (gatekeeper), all optional:
+# min_vote_average: 7.2        # TMDB rating floor (0-10)
+# min_vote_count: 300
+# year_min: 1965
+# year_max: 2015
+# min_runtime: 75              # minutes; a film with no runtime is rejected when set
+# languages: [fr, it]          # original language allow-list (ISO 639-1)
+# excluded_genre_ids: [99]     # TMDB genre ids
+
+# Selection limits, all optional:
+# max_per_collection: 2        # films per TMDB collection (franchise)
+# director_cap: 3              # films per director
+# decade_min: {1970: 15, 2000: 5}    # hard: a list that misses it is not published
+# category_min: {alpha: 12}          # soft: steers selection and top-ups only
+
+# Run shape (defaults shown):
+target_count: 100              # list size, at most 250
+overgenerate_factor: 1.6       # ask for target_count x this in the first round
+history_window_runs: 7         # titles from the last N published lists are not repeated
+history_mode: strict           # relax: repeat the oldest titles if new ones run out
+on_shortfall: fail             # publish_partial: publish at least min_accept items
+# min_accept: 80
+max_model_calls_per_run: 8
+max_runs_per_day: 4
+
+# Model (defaults: DEFAULT_MODEL from the environment; temperature not sent):
+# model: google/gemini-3.5-flash-lite
+# temperature: 0.7
+# max_tokens: 8000
+# timeout_s: 120

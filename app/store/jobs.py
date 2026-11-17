@@ -15,8 +15,8 @@ Who calls what:
     claim_job, heartbeat, finish_*, commit_run    the lease holder only
     recover_abandoned                             the lease holder, at start and every minute
 
-This module only provides the primitives. The runner that drives them (heartbeat task,
-cancellation, wall-clock cap) is milestone 5.
+This module only provides the primitives. ``app.curation.runner`` drives them (heartbeat
+task, cancellation, wall-clock cap, recovery at start).
 """
 
 import os
@@ -185,23 +185,30 @@ def enqueue_job(
     return Enqueued.QUEUED, job_id
 
 
-def claim_job(conn: sqlite3.Connection, lease: Lease) -> Optional[Claim]:
+def claim_job(conn: sqlite3.Connection, lease: Lease, *, job_id: Optional[int] = None) -> Optional[Claim]:
     """
     Claim the oldest runnable pending job and open its run row, fenced by the lease.
     Pending jobs of a catalog that is no longer enabled are closed as superseded on the way.
+
+    ``job_id`` claims that pending job only, ignoring ``not_before``: an operator's explicit
+    CLI run of a job whose retry backoff has not elapsed yet.
     """
     now = now_ms()
+    if job_id is None:
+        where, params = "j.state = 'pending' AND j.not_before <= ?", (now,)
+    else:
+        where, params = "j.state = 'pending' AND j.id = ?", (job_id,)
     with transaction(conn):
         _require_lease(conn, lease)
         while True:
             job = conn.execute(
-                """
+                f"""
                 SELECT j.id, j.catalog_id, j.kind, j.trigger, j.attempt, d.state, d.config_rev, d.epoch
                 FROM jobs j JOIN catalog_defs d USING (catalog_id)
-                WHERE j.state = 'pending' AND j.not_before <= ?
+                WHERE {where}
                 ORDER BY j.requested_at, j.id LIMIT 1
                 """,
-                (now,),
+                params,
             ).fetchone()
             if job is None:
                 return None
@@ -267,14 +274,49 @@ def _end_run(conn: sqlite3.Connection, claim: Claim, status: str, **fields) -> N
     conn.execute(sql, (status, now_ms(), *fields.values(), claim.run_id))
 
 
-def _supersede(conn: sqlite3.Connection, claim: Claim) -> None:
+# Columns a lease holder may set on its own run row (besides status and finished_at).
+RUN_FIELDS = frozenset(
+    {
+        "seed",
+        "stage_counts_json",
+        "reject_reasons_json",
+        "prompt_hash",
+        "model_calls",
+        "tokens_in",
+        "tokens_out",
+        "relaxed_window",
+        "repeats",
+    }
+)
+
+
+def _run_fields(fields: Optional[dict]) -> dict:
+    fields = {k: v for k, v in (fields or {}).items() if v is not None}
+    unknown = set(fields) - RUN_FIELDS
+    if unknown:
+        raise ValueError(f"unknown run fields: {sorted(unknown)}")
+    return fields
+
+
+def update_run(conn: sqlite3.Connection, lease: Lease, claim: Claim, **fields) -> None:
+    """Record progress on the claim's own run row (seed, prompt hash), fenced. Raises LostLease."""
+    fields = _run_fields(fields)
+    with transaction(conn):
+        _require_lease(conn, lease)
+        _touch_job(conn, claim, "UPDATE jobs SET heartbeat_at = ?", (now_ms(),))
+        if fields:
+            columns = ", ".join(f"{k} = ?" for k in fields)
+            conn.execute(f"UPDATE runs SET {columns} WHERE id = ?", (*fields.values(), claim.run_id))
+
+
+def _supersede(conn: sqlite3.Connection, claim: Claim, run_fields: Optional[dict] = None) -> None:
     """
     Close the job and run as superseded and, if the catalog is still enabled, queue exactly
     one replacement. The old job leaves the open-job index first, so the insert cannot
     collide with it.
     """
     _touch_job(conn, claim, "UPDATE jobs SET state = 'done', state_detail = 'superseded'", ())
-    _end_run(conn, claim, "superseded")
+    _end_run(conn, claim, "superseded", **_run_fields(run_fields))
     state = conn.execute("SELECT state FROM catalog_defs WHERE catalog_id = ?", (claim.catalog_id,)).fetchone()
     if state is not None and state["state"] == "enabled":
         _insert_job(conn, claim.catalog_id, claim.kind, "superseded", now_ms())
@@ -288,6 +330,7 @@ def commit_run(
     *,
     stage_counts_json: Optional[str] = None,
     reject_reasons_json: Optional[str] = None,
+    run_fields: Optional[dict] = None,
 ) -> Outcome:
     """
     The fenced commit (PLAN.md section 4), one transaction: verify the lease; verify the
@@ -295,9 +338,14 @@ def commit_run(
     (a refresh) or just close the run (a dry run). If the catalog changed, nothing is
     published, the run ends superseded and one replacement job is queued.
 
+    ``run_fields`` are further ``runs`` columns to record (see ``RUN_FIELDS``).
+
     Raises LostLease without writing anything if this process is fenced out.
     """
     items = list(items or [])
+    fields = _run_fields(
+        {**(run_fields or {}), "stage_counts_json": stage_counts_json, "reject_reasons_json": reject_reasons_json}
+    )
     with transaction(conn):
         _require_lease(conn, lease)
         current = conn.execute(
@@ -310,15 +358,15 @@ def commit_run(
             and current["epoch"] == claim.epoch
         )
         if not unchanged:
-            _supersede(conn, claim)
+            _supersede(conn, claim, fields)
             return Outcome.SUPERSEDED
         if claim.kind == "dry_run":
             _touch_job(conn, claim, "UPDATE jobs SET state = 'done'", ())
-            _end_run(conn, claim, "ok", stage_counts_json=stage_counts_json, reject_reasons_json=reject_reasons_json)
+            _end_run(conn, claim, "ok", **fields)
             return Outcome.DRY_RUN_OK
         _touch_job(conn, claim, "UPDATE jobs SET state = 'done'", ())
         publish_snapshot(conn, claim.catalog_id, items, config_rev=claim.config_rev, run_id=claim.run_id)
-        _end_run(conn, claim, "ok", stage_counts_json=stage_counts_json, reject_reasons_json=reject_reasons_json)
+        _end_run(conn, claim, "ok", **fields)
         _failpoint("inside_commit")
     return Outcome.PUBLISHED
 
@@ -331,6 +379,7 @@ def finish_failed(
     error_category: str,
     error_status: Optional[int] = None,
     transient: bool = False,
+    run_fields: Optional[dict] = None,
 ) -> str:
     """
     End a run that did not publish. Transient causes (network, 429, 5xx, timeout) put the
@@ -340,7 +389,14 @@ def finish_failed(
     """
     with transaction(conn):
         _require_lease(conn, lease)
-        _end_run(conn, claim, "failed", error_category=error_category, error_status=error_status)
+        _end_run(
+            conn,
+            claim,
+            "failed",
+            error_category=error_category,
+            error_status=error_status,
+            **_run_fields(run_fields),
+        )
         return _retry_or_fail(conn, claim, transient, error_category)
 
 
@@ -360,11 +416,11 @@ def _retry_or_fail(conn: sqlite3.Connection, claim: Claim, transient: bool, deta
     return "failed"
 
 
-def finish_cancelled(conn: sqlite3.Connection, lease: Lease, claim: Claim) -> None:
+def finish_cancelled(conn: sqlite3.Connection, lease: Lease, claim: Claim, run_fields: Optional[dict] = None) -> None:
     """SIGTERM or cancellation: put the job back with no attempt penalty; the run is abandoned."""
     with transaction(conn):
         _require_lease(conn, lease)
-        _end_run(conn, claim, "abandoned")
+        _end_run(conn, claim, "abandoned", **_run_fields(run_fields))
         _touch_job(
             conn,
             claim,
