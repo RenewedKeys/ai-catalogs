@@ -633,3 +633,28 @@ which has no Docker):
 2. A green CI run, including `scripts/compose_smoke.sh` (image build, both services, clean stop).
 3. The configure flow exercised once in a browser with `ENABLE_LEGACY=true`: fresh save
    with blank keys, edit with blank keys, provider change requiring a key.
+
+## 17. Milestone 4 status
+
+Implemented on branch `milestone-4-llm`:
+
+- `app/curation/limits.py`: `Limits` parses the limit fields of a definition once and
+  produces both `GateRules` (`gate_rules_from_definition`, for milestone 5) and the
+  plain-language "HARD CONSTRAINTS" block / `limits` template variable. Unset limits
+  produce no text and no rule; a parity test fails if a `GateRules` threshold gains no
+  prompt counterpart.
+- `app/curation/prompt.py`: sandboxed `StrictUndefined` rendering, section 6 variables plus
+  `limits_block`. Blocks the template does not place itself (limits, unmet quotas,
+  already-this-run, exclusions) are appended after it, so a plain free-form prompt still
+  gets every limit. Size cap trims exclusions (oldest first), then already-this-run; the
+  template and constraints are never cut. The per-category "angle" hint is left to the
+  template (there is no definition field for angles yet).
+- `app/curation/llm.py`: `CuratedLLMService` (built on the upstream `LLMService`
+  approach, without its error swallowing, SDK retries and blanket downgrade). The working
+  output mode is remembered per (base URL, model) for 24 h in table `llm_modes`
+  (migration 2), so separate processes share it.
+- `app/curation/budget.py`: ledger-row reservation per attempt; per-run and global daily
+  limits (`MAX_MODEL_CALLS_PER_DAY`, default 40, UTC day). `max_runs_per_day` stays in
+  `app.store.jobs.enqueue_job` (rolling 24 h, refreshes only), as built in milestone 2.
+- `scripts/probe_model.py`: tested against a fake transport only; the live probe is
+  pending until a session with `OPENAI_API_KEY` runs it.
