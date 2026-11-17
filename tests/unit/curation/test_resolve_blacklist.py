@@ -88,6 +88,42 @@ class TestCandidates:
 
 
 class TestRun:
+    async def test_retry_logs_never_reach_stdout(self, env_key, tmp_path, capsys):
+        import logging
+        import sys
+
+        handler = logging.StreamHandler(sys.stdout)
+        logging.getLogger().addHandler(handler)
+        fake = FakeTMDB()
+        fake.script = [httpx.Response(429, headers={"Retry-After": "0"})]
+        titles = tmp_path / "t.txt"
+        titles.write_text("The Thing (1982)\n")
+        try:
+            assert await rb.run(args(titles=str(titles)), transport=transport(fake)) == 0
+        finally:
+            logging.getLogger().removeHandler(handler)
+        captured = capsys.readouterr()
+        assert "retry" in captured.err
+        for line in captured.out.splitlines():
+            assert line == "" or line.startswith(("#", " ", "blacklist_tmdb_ids:", "franchise_denylist:")), line
+
+    def test_truncation_is_reported(self):
+        cands = [{"id": i, "title": "X", "year": 2000, "vote_count": 100 - i, "fuzzy": False} for i in range(10)]
+        text = rb.render_yaml([rb.TitleResult(rb.TitleQuery("g", "X"), cands)], [], today=date(2026, 11, 16))
+        assert f"... {10 - rb.MAX_TITLE_CANDIDATES} more not shown" in text
+
+    def test_cli_subprocess_help_and_missing_key(self, tmp_path):
+        import os
+        import subprocess
+        import sys
+
+        env = {k: v for k, v in os.environ.items() if k != "TMDB_API_KEY"}
+        env["DATABASE_PATH"] = str(tmp_path / "db.sqlite")
+        help_ = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, env=env)
+        assert help_.returncode == 0 and "--titles" in help_.stdout
+        nokey = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, env=env)
+        assert nokey.returncode == 1 and "TMDB_API_KEY is not set" in nokey.stderr and nokey.stdout == ""
+
     async def test_yaml_output(self, env_key, tmp_path, capsys):
         fake = FakeTMDB()
         titles = tmp_path / "anchors.txt"

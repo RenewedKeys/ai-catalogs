@@ -23,6 +23,7 @@ The TMDB key comes only from the ``TMDB_API_KEY`` environment variable.
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
@@ -120,15 +121,15 @@ FRANCHISES: tuple[Franchise, ...] = (
             "X-Men",
             "Spider-Man",
         ),
-        companies=("Marvel Studios", "Marvel Entertainment"),
-        keywords=("marvel cinematic universe", "marvel comics", "superhero"),
+        companies=("Marvel Studios",),
+        keywords=("marvel cinematic universe",),
         title_patterns=(r"\bavengers\b", r"\bx-men\b", r"\bspider-man\b"),
     ),
     Franchise(
         "DC",
         collections=("Batman", "Superman", "Wonder Woman", "Justice League", "The Dark Knight"),
-        companies=("DC Films", "DC Studios", "DC Comics", "DC Entertainment"),
-        keywords=("dc extended universe", "dc comics"),
+        companies=("DC Films", "DC Studios"),
+        keywords=("dc extended universe",),
         title_patterns=(r"\bbatman\b", r"\bsuperman\b", r"\bjustice league\b"),
     ),
     Franchise(
@@ -238,7 +239,7 @@ def title_candidates(query: TitleQuery, results: list[dict]) -> list[dict]:
             fuzzy.append({**entry, "fuzzy": True})
     chosen = exact or fuzzy
     chosen.sort(key=lambda c: (-c["vote_count"], c["id"]))
-    return chosen[:MAX_TITLE_CANDIDATES]
+    return chosen  # render_yaml shows the first MAX_TITLE_CANDIDATES
 
 
 def named_candidates(query: str, results: list[dict]) -> list[dict]:
@@ -248,7 +249,7 @@ def named_candidates(query: str, results: list[dict]) -> list[dict]:
     for r in results:
         if isinstance(r.get("id"), int) and norm in normalize_title(r.get("name") or ""):
             out.append({"id": r["id"], "name": r.get("name") or ""})
-    return out[:MAX_NAMED_CANDIDATES]
+    return out  # render_yaml shows the first MAX_NAMED_CANDIDATES
 
 
 async def resolve_title(client: TMDBClient, query: TitleQuery) -> TitleResult:
@@ -309,11 +310,13 @@ def render_yaml(titles: list[TitleResult], franchises: list[FranchiseResult], to
             lines.append(f"  # {_comment(label)}: no TMDB match, resolve by hand")
             continue
         lines.append(f"  # {_comment(label)}")
-        for c in result.candidates:
+        for c in result.candidates[:MAX_TITLE_CANDIDATES]:
             note = f"{c['title']} ({c['year'] or 'no date'}), {c['vote_count']} votes"
             if c["fuzzy"]:
                 note += ", fuzzy title match"
             lines.append(f"  - {c['id']}  # {_comment(note)}")
+        if len(result.candidates) > MAX_TITLE_CANDIDATES:
+            lines.append(f"  # ... {len(result.candidates) - MAX_TITLE_CANDIDATES} more not shown (fewer votes)")
     if not any(r.query.group == "taste_anchors" for r in titles):
         lines.append("  # ---- taste_anchors: none given (PLAN.md does not name them); pass --titles")
 
@@ -328,8 +331,10 @@ def render_yaml(titles: list[TitleResult], franchises: list[FranchiseResult], to
             for n in named:
                 if not n.candidates:
                     lines.append(f"    # {_comment(n.query)}: no match")
-                for c in n.candidates:
+                for c in n.candidates[:MAX_NAMED_CANDIDATES]:
                     lines.append(f"    - {c['id']}  # {_comment(c['name'])} (query: {_comment(n.query)})")
+                if len(n.candidates) > MAX_NAMED_CANDIDATES:
+                    lines.append(f"    # ... {len(n.candidates) - MAX_NAMED_CANDIDATES} more not shown for this query")
     lines.append("  title_patterns:")
     for fr in franchises:
         if fr.franchise.title_patterns:
@@ -346,8 +351,19 @@ def check_out_path(path: str) -> Path:
     return out
 
 
+def _logs_to_stderr() -> None:
+    """app.core.logging logs to stdout; stdout here is the YAML, so move every handler."""
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, logging.StreamHandler) and handler.stream in (sys.stdout, sys.__stdout__):
+            handler.setStream(sys.stderr)
+
+
 async def run(args: argparse.Namespace, transport=None) -> int:
+    _logs_to_stderr()
     out = check_out_path(args.out) if args.out else None
+    if not os.environ.get("TMDB_API_KEY"):
+        print("TMDB_API_KEY is not set", file=sys.stderr)
+        return 1
     queries = [] if args.no_defaults else default_queries()
     if args.titles:
         queries = parse_titles_file(Path(args.titles).read_text(encoding="utf-8")) + queries

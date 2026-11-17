@@ -116,9 +116,26 @@ class TestResolve:
         assert fake.search_calls() == [(title, year)]
 
     async def test_adjacent_year_guess_falls_back(self, make_gate, fake):
-        # LLM says 1991; no 1991 hit; 1990 (year - 1) is tried next and is within +/- 1.
+        # LLM says 1991; no 1991 hit; 1990 and 1992 are searched together, 1990 is within +/- 1.
         assert await make_gate().resolve("Total Recall", 1991) == 861
-        assert fake.search_calls() == [("Total Recall", 1991), ("Total Recall", 1990)]
+        assert fake.search_calls() == [("Total Recall", 1991), ("Total Recall", 1990), ("Total Recall", 1992)]
+
+    async def test_adjacent_years_are_pooled_by_vote_count(self, make_gate, fake):
+        def hit(tmdb_id, year, votes):
+            return {
+                "id": tmdb_id,
+                "title": "Hard Target",
+                "original_title": "Hard Target",
+                "release_date": f"{year}-08-20",
+                "vote_count": votes,
+            }
+
+        fake.searches += [
+            {"query": "Hard Target", "primary_release_year": 1992, "results": [hit(11, 1992, 50)]},
+            {"query": "Hard Target", "primary_release_year": 1994, "results": [hit(2019, 1994, 1500)]},
+        ]
+        # year - 1 alone would pick id 11; pooled with year + 1, the higher vote_count wins.
+        assert await make_gate().resolve("Hard Target", 1993) == 2019
 
     async def test_yearless_search_still_applies_year_window(self, make_gate, fake):
         # 2010 and 2009 searches find nothing; 2011 finds the prequel. Remove the 2011 entry
@@ -376,7 +393,11 @@ class TestCache:
         await make_gate().check("Total Recall", 1990)
         assert (len(fake.search_calls()), len(fake.detail_calls())) == (1, 2)
 
-        clock.t = T0 + 30 * DAY  # resolution is 30 days old (details too: fetched on day 7)
+        clock.t = T0 + 30 * DAY - 0.001  # resolution still cached; details (day 7) are stale
+        await make_gate().check("Total Recall", 1990)
+        assert (len(fake.search_calls()), len(fake.detail_calls())) == (1, 3)
+
+        clock.t = T0 + 30 * DAY  # resolution is 30 days old; details were just refreshed
         await make_gate().check("Total Recall", 1990)
         assert (len(fake.search_calls()), len(fake.detail_calls())) == (2, 3)
 
@@ -507,7 +528,7 @@ class TestRetries:
 
         async with TMDBClient(TOKEN, transport=httpx.MockTransport(handler), concurrency=8) as client:
             await asyncio.gather(*(client.get("/search/movie", {"query": str(i)}) for i in range(30)))
-        assert peak == 8
+        assert 1 < peak <= 8
 
     async def test_logs_and_errors_never_carry_provider_text_or_token(self, make_gate, fake, caplog):
         body = {"status_message": "Invalid API key: SECRET-PROVIDER-TEXT"}

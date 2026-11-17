@@ -244,11 +244,15 @@ def pick_best(query_norm: str, year: int | None, hits: Iterable[SearchHit]) -> S
     return max(acceptable, key=lambda h: (h.vote_count, -h.tmdb_id))
 
 
-def search_plan(year: int | None) -> list[int | None]:
-    """Year filters to try in order: the year, the adjacent years, then no year."""
+def search_plan(year: int | None) -> list[list[int | None]]:
+    """
+    Phases of year filters: the year, then both adjacent years pooled (so the highest
+    ``vote_count`` across them wins), then no year. The first phase with an acceptable
+    candidate decides.
+    """
     if year is None:
-        return [None]
-    return [year, year - 1, year + 1, None]
+        return [[None]]
+    return [[year], [year - 1, year + 1], [None]]
 
 
 def _hits(payload: dict) -> list[SearchHit]:
@@ -547,11 +551,14 @@ class TMDBGate:
                 return None
 
         best: SearchHit | None = None
-        for year_filter in search_plan(year):
-            params = {"query": title, "include_adult": "false", "language": "en-US", "page": "1"}
-            if year_filter is not None:
-                params["primary_release_year"] = str(year_filter)
-            best = pick_best(query_norm, year, _hits(await self.client.get("/search/movie", params)))
+        for phase in search_plan(year):
+            hits: list[SearchHit] = []
+            for year_filter in phase:
+                params = {"query": title, "include_adult": "false", "language": "en-US", "page": "1"}
+                if year_filter is not None:
+                    params["primary_release_year"] = str(year_filter)
+                hits += _hits(await self.client.get("/search/movie", params))
+            best = pick_best(query_norm, year, hits)
             if best is not None:
                 break
 
