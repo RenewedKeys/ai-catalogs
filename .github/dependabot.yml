@@ -7,8 +7,6 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 10
-    reviewers:
-      - "willtho89"
     labels:
       - "dependencies"
       - "python"
@@ -31,8 +29,6 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
-    reviewers:
-      - "willtho89"
     labels:
       - "dependencies"
       - "ci/cd"
@@ -44,8 +40,6 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
-    reviewers:
-      - "willtho89"
     labels:
       - "dependencies"
       - "docker"
