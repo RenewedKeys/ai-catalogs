@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from app.core.config import settings  # noqa: E402
 from app.curation.budget import Budget, BudgetExceeded, BudgetLimits  # noqa: E402
 from app.curation.llm import CuratedLLMService, LLMError, LLMSettings  # noqa: E402
+from app.store import db  # noqa: E402
 
 # Neutral probe request: tests format compliance, not any catalog's taste.
 PROBE_PROMPT = (
@@ -92,7 +93,16 @@ async def run(argv: list[str] | None = None, http_client=None) -> int:
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--count", type=int, default=10, help="films to request per probe (default 10)")
     parser.add_argument("--no-online", action="store_true", help="skip the :online variant")
+    parser.add_argument("--db", default=None, help="SQLite file for the ledger (default: DATABASE_PATH)")
     args = parser.parse_args(argv)
+    if args.db:
+        settings.DATABASE_PATH = args.db
+    try:
+        with db.session():
+            pass
+    except OSError as e:
+        print(f"cannot open the database at DATABASE_PATH ({type(e).__name__}); pass --db PATH", file=sys.stderr)
+        return 2
 
     if not settings.OPENAI_API_KEY:
         print("OPENAI_API_KEY is not set (environment or .env)", file=sys.stderr)

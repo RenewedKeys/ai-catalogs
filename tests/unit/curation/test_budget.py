@@ -1,5 +1,6 @@
 """Budget gate: a ledger row before every attempt, limits across restarts and processes."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -115,7 +116,7 @@ def test_limits_survive_a_restart(_temporary_database):
             capture_output=True,
             text=True,
             cwd=ROOT,
-            env={"PYTEST_VERSION": "1", "PATH": "/usr/bin:/bin"},
+            env={**os.environ, "PYTEST_VERSION": "1"},
         )
         assert p.returncode == 0, p.stderr
         outs.append(p.stdout.strip())

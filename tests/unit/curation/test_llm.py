@@ -251,9 +251,11 @@ async def test_no_secret_or_provider_text_in_logs_errors_or_db(caplog, _temporar
         [error(503, "x")],
     ):
         with pytest.raises(LLMError) as e:
-            await service(FakeLLM(reply)).generate("p", 1)
+            await service(FakeLLM(reply)).generate("PROMPT-SENTINEL-77", 1)
         errors.append(e.value)
-    await service(FakeLLM([error(400, "json_schema not supported"), completion(movies_json(1))])).generate("p", 1)
+    await service(FakeLLM([error(400, "json_schema not supported"), completion(movies_json(1))])).generate(
+        "PROMPT-SENTINEL-77", 1
+    )
 
     haystacks = [caplog.text] + [str(e) for e in errors] + [repr(e.args) for e in errors]
     for path in glob.glob(_temporary_database + "*"):  # the database and its -wal / -shm files
@@ -262,6 +264,21 @@ async def test_no_secret_or_provider_text_in_logs_errors_or_db(caplog, _temporar
     for text in haystacks:
         assert API_KEY_SENTINEL not in text
         assert BODY_SENTINEL not in text
-        assert "PROMPT" not in text
+        assert "PROMPT-SENTINEL-77" not in text
     for e in errors:
         assert e.__suppress_context__  # raised "from None": tracebacks do not chain the SDK error
+
+
+async def test_parameter_rejection_does_not_downgrade_and_hints():
+    fake = FakeLLM([error(400, "Unsupported parameter: temperature")])
+    with pytest.raises(LLMError) as e:
+        await service(fake, temperature=1.0).generate("p", 1)
+    assert len(fake.requests) == 1
+    assert "temperature" in e.value.hint and BODY_SENTINEL not in str(e.value)
+
+
+async def test_mode_memory_key_is_hashed(_temporary_database):
+    await service(FakeLLM([error(400, "json_schema not supported"), completion(movies_json(1))])).generate("p", 1)
+    with db.session() as conn:
+        (key,) = conn.execute("SELECT key FROM llm_modes").fetchone()
+    assert "llm.invalid" not in key and len(key) == 64

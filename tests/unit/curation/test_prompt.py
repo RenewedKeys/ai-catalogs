@@ -1,10 +1,12 @@
 """Prompt templating: sandbox, variables, seed, exclusion block, limits block, size cap."""
 
+import os
 import subprocess
 import sys
 from datetime import date
 
 import pytest
+from pathlib import Path
 
 from app.curation.prompt import (
     EXCLUSION_PREFIX,
@@ -17,6 +19,7 @@ from app.curation.prompt import (
     validate_definition_prompt,
 )
 
+ROOT = Path(__file__).resolve().parents[3]
 DAY = date(2026, 3, 4)  # a Wednesday
 SEED = make_seed(DAY, "catalog_a", "nonce")
 
@@ -68,9 +71,10 @@ def test_seed_is_deterministic_and_process_independent():
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        env={"PYTHONHASHSEED": "123", "PYTEST_VERSION": "1"},
-        cwd=".",
+        env={**os.environ, "PYTHONHASHSEED": "123", "PYTEST_VERSION": "1"},
+        cwd=ROOT,
     )
+    assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == SEED
 
 
@@ -177,3 +181,8 @@ def test_validate_definition_prompt():
         validate_definition_prompt({"prompt": "{{ typo_variable }}"})
     with pytest.raises(Exception):
         validate_definition_prompt({"prompt": "ok", "year_min": 2000, "year_max": 1990})
+
+
+def test_validation_rejects_unknown_variable_in_untaken_branch():
+    with pytest.raises(PromptError, match="typo_in_branch"):
+        validate_definition_prompt({"prompt": "{% if limits.year_min %}{{ typo_in_branch }}{% endif %}ok"})

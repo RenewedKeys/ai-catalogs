@@ -70,3 +70,10 @@ async def test_missing_key_exits_2(monkeypatch, capsys):
 
 async def test_invalid_temperature_exits_2(capsys):
     assert await probe.run(["--temperature", "3"]) == 2
+
+
+async def test_unopenable_database_exits_2(tmp_path, capsys):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    assert await probe.run(["--db", str(blocker / "sub" / "db.sqlite")]) == 2
+    assert "--db" in capsys.readouterr().err

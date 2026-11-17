@@ -52,6 +52,27 @@ EXCLUSION_PREFIX = "DO NOT INCLUDE:"
 ALREADY_PREFIX = "ALREADY SUGGESTED THIS RUN (do not repeat):"
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
+TEMPLATE_VARIABLES = frozenset(
+    {
+        "today",
+        "weekday",
+        "day_of_month",
+        "month_name",
+        "year",
+        "seed",
+        "target_count",
+        "request_count",
+        "focus",
+        "categories",
+        "anchors",
+        "limits",
+        "limits_block",
+        "exclusions",
+        "already_this_run",
+        "unmet",
+    }
+)
+
 # Blocks appended after the template unless it references them, in this order.
 _APPENDABLE = ("limits_block", "unmet", "already_this_run", "exclusions")
 
@@ -280,6 +301,11 @@ def validate_definition_prompt(definition: Mapping[str, Any]) -> RenderedPrompt:
     ``PromptError`` (or ``pydantic.ValidationError`` for invalid limits).
     """
     limits_from_definition(definition)  # limits must parse before the prompt can use them
+    _, referenced = compile_template(definition.get("prompt"))
+    unknown = sorted(referenced - TEMPLATE_VARIABLES)
+    if unknown:
+        # Caught here even inside a branch the sample context does not take.
+        raise PromptError(f"template uses unknown variable(s): {', '.join(unknown)}")
     sample_history = [(f"Sample Title {i}", 1990 + i % 30) for i in range(1, 30)]
     sample_run = [(f"Sample Run Title {i}", 2000 + i % 20) for i in range(1, 15)]
     return render_prompt(

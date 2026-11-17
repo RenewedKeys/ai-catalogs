@@ -30,6 +30,7 @@ unset), ``max_tokens`` (default 8000, ceiling 16000), ``timeout_s`` (default 120
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -86,7 +87,6 @@ _CAPABILITY_MARKERS = (
     "structured_output",
     "structured-output",
     "not supported",
-    "unsupported parameter",
     "requested parameters",  # OpenRouter: "No endpoints found that can handle the requested parameters"
     "support the requested",
 )
@@ -356,8 +356,17 @@ def classify(error: BaseException) -> LLMError:
             return LLMError("provider_rate_limit", status)
         if status >= 500:
             return LLMError("provider_http_5xx", status)
-        return LLMError("provider_http_4xx", status)
+        return LLMError("provider_http_4xx", status, _parameter_hint(error))
     return LLMError("transport")
+
+
+def _parameter_hint(error: openai.APIStatusError) -> str:
+    """Our own hint when a 4xx names a sampling parameter (no provider text is copied)."""
+    text = _error_body_text(error)
+    named = [p for p in ("temperature", "max_tokens") if p in text]
+    if named:
+        return f"provider rejected the request; it mentions {' and '.join(named)}: check the catalog's setting"
+    return ""
 
 
 # --------------------------------------------------------------------------- service
@@ -410,7 +419,8 @@ class CuratedLLMService:
 
     @property
     def mode_key(self) -> str:
-        return f"{settings.OPENAI_BASE_URL}|{self.model}"
+        # Hashed: a base URL can embed credentials, and nothing secret goes into SQLite.
+        return hashlib.sha256(f"{settings.OPENAI_BASE_URL}|{self.model}".encode("utf-8")).hexdigest()
 
     def client(self) -> openai.AsyncOpenAI:
         if self._client is None:
