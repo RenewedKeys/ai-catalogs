@@ -13,6 +13,17 @@
     });
   });
 
+  document.querySelectorAll("button[data-copy]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var box = document.getElementById(button.getAttribute("data-copy"));
+      if (!box) return;
+      box.select();
+      var done = function () { button.textContent = "Copied"; };
+      if (navigator.clipboard) navigator.clipboard.writeText(box.value).then(done, function () {});
+      else if (document.execCommand("copy")) done();
+    });
+  });
+
   var tabs = document.querySelectorAll(".tabs a");
   tabs.forEach(function (tab) {
     tab.addEventListener("click", function (ev) {

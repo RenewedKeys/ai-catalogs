@@ -7,7 +7,7 @@ Security regression tests for milestone 1 (PLAN.md, sections 3 and 10):
 - the legacy surface is not mounted by default
 - CORS headers are only sent by the Stremio sub-app
 - authorised /ops responses (status JSON and HTML, webhooks) carry no secret either
-- logged-in /admin pages and actions (milestone 8) carry no secret either
+- logged-in /configure pages and actions (milestone 8) carry no secret either
 """
 
 import json
@@ -339,7 +339,7 @@ def test_invalid_config_is_not_logged_verbatim(secrets, caplog):
 def test_routes_added_after_create_app_would_be_shadowed():
     """
     Guard for later milestones: the Stremio sub-app is a catch-all mounted last, so /ops and
-    /admin must be registered inside create_app() before it, never added to the app afterwards.
+    /configure must be registered inside create_app() before it, never added to the app afterwards.
     """
     app = create_app(enable_legacy=False)
     assert app.routes[-1].path == "" and app.routes[-1].app is app.state.stremio_app
@@ -378,7 +378,7 @@ def test_authorised_ops_responses_reveal_no_secret(secrets, caplog):
 
 def test_admin_editor_reveals_no_secret(secrets, caplog, monkeypatch, tmp_path):
     """
-    Logged in to /admin with every secret set (including the session secret and the password
+    Logged in to /configure with every secret set (including the session secret and the password
     used to log in): every page, the status JSON, the export, the prompt preview, a validation
     error, a save, a dry run and a refused rollback come back without any secret, and nothing
     is logged with one.
@@ -401,33 +401,44 @@ def test_admin_editor_reveals_no_secret(secrets, caplog, monkeypatch, tmp_path):
     app = create_app(enable_legacy=False)
     client = TestClient(app, follow_redirects=False)
     origin = {"Origin": "https://example.org"}
-    responses = [client.get("/admin/login", headers=origin)]
+    responses = [client.get("/configure/login", headers=origin)]
 
     def csrf(html):
         return re.search(r'name="csrf" value="([^"]+)"', html).group(1)
 
-    responses.append(client.post("/admin/login", data={"csrf": csrf(responses[0].text), "password": "wrong-one!!!!"}))
     responses.append(
-        client.post("/admin/login", data={"csrf": csrf(responses[0].text), "password": SENTINELS["ADMIN_PASSWORD"]})
+        client.post("/configure/login", data={"csrf": csrf(responses[0].text), "password": "wrong-one!!!!"})
+    )
+    responses.append(
+        client.post("/configure/login", data={"csrf": csrf(responses[0].text), "password": SENTINELS["ADMIN_PASSWORD"]})
     )
     assert responses[-1].status_code == 303
-    token = csrf(client.get("/admin/").text)
-    paths = [p for p in _get_paths(app, "x") if p.startswith("/admin")]
-    paths = [p.replace("trending_movie", "sweep_two") for p in paths] + ["/admin/catalogs/sweep_two/export.yaml"]
-    assert "/admin/catalogs/sweep_two" in paths and "/admin/static/admin.js" in paths
+    token = csrf(client.get("/configure/").text)
+    paths = [p for p in _get_paths(app, "x") if p.startswith("/configure")]
+    paths = [p.replace("trending_movie", "sweep_two") for p in paths] + ["/configure/catalogs/sweep_two/export.yaml"]
+    assert "/configure/catalogs/sweep_two" in paths and "/configure/static/admin.js" in paths
     responses += [client.get(p, headers=origin) for p in paths]
     form = {"csrf": token, "mode": "form", "base_rev": rev}
     responses += [
-        client.post("/admin/catalogs/sweep_two/save", data={**form, "prompt": "{{ nope }}", "action": "save"}),
+        client.post("/configure/catalogs/sweep_two/save", data={**form, "prompt": "{{ nope }}", "action": "save"}),
         client.post(
-            "/admin/catalogs/sweep_two/save", data={**form, "prompt": "Films {{ request_count }}", "action": "validate"}
+            "/configure/catalogs/sweep_two/save",
+            data={**form, "prompt": "Films {{ request_count }}", "action": "validate"},
         ),
-        client.post("/admin/catalogs/sweep_two/dry-run", data={"csrf": token}),
-        client.post("/admin/catalogs/sweep_two/rollback/1", data={"csrf": token}),
-        client.post("/admin/catalogs/sweep_two/save", data={**form, "prompt": "x", "action": "save"}, headers=origin),
+        client.post("/configure/catalogs/sweep_two/dry-run", data={"csrf": token}),
+        client.post("/configure/catalogs/sweep_two/rollback/1", data={"csrf": token}),
+        client.post(
+            "/configure/catalogs/sweep_two/save", data={**form, "prompt": "x", "action": "save"}, headers=origin
+        ),
     ]
     assert [r.status_code for r in responses[-5:]] == [422, 200, 303, 409, 403]
+    # The one deliberate exception: the signed-in catalog list shows the addon URL (with the
+    # access token) so it can be copied into AIOMetadata. No other secret, and no other page.
+    addon_token = SENTINELS["ADDON_ACCESS_TOKEN"]
+    index = [r for r in responses if r.request.url.path == "/configure/" and r.status_code == 200]
+    assert index and f"/c/{addon_token}/manifest.json" in index[0].text
     for r in responses:
-        _assert_clean(r, secrets, r.request.url.path)
+        allowed = {addon_token} if r.request.url.path == "/configure/" and r.status_code == 200 else set()
+        _assert_clean(r, [s for s in secrets if s not in allowed], r.request.url.path)
     for secret in secrets:
         assert secret not in caplog.text

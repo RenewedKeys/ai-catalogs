@@ -43,3 +43,4 @@ button:disabled{opacity:.5;cursor:default}
 .login{display:flex;flex-direction:column;gap:8px;max-width:320px}
 .danger-zone{margin-top:12px}
 .field input[type=checkbox]{justify-self:start;margin-top:8px;width:18px;height:18px}
+.manifest input{flex:1;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:13px}

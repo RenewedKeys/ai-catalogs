@@ -67,11 +67,27 @@ restart neither skips nor repeats a run; runs missed while the worker was down a
 run. A catalog without a schedule refreshes only when asked (CLI or `/ops`). Each refresh
 still counts against `max_runs_per_day` and the daily model-call budget.
 
-## Browser editor: `/admin`
+## Browser editor: `/configure`
 
-Off by default. Set `ENABLE_EDITOR=true`, `SESSION_SECRET` (at least 32 bytes) and
-`ADMIN_PASSWORD` (at least 12 characters) in `.env`; with the flag on and a secret missing or
-too short, the web service does not start. Then open `https://<your server>/admin/` and log in.
+Off by default. Turn it on with `ENABLE_EDITOR=true` and pick how it signs you in:
+
+- **Its own password** (`EDITOR_AUTH=password`, the default): also set `SESSION_SECRET` (at
+  least 32 bytes) and `ADMIN_PASSWORD` (at least 12 characters); with either missing or too
+  short, the web service does not start.
+- **Your reverse proxy's login** (`EDITOR_AUTH=proxy`), e.g. Authelia behind Traefik
+  forward-auth: no password of its own. The editor trusts the user name the proxy passes in
+  `EDITOR_PROXY_USER_HEADER` (default `Remote-User`, which Authelia sets) and refuses any request
+  without it, so it stays locked if the proxy rule is ever removed. Use this only when the
+  container is reachable through that proxy alone (publish no port), and make sure the proxy
+  requires its login for `/configure` and everything under it. `SESSION_SECRET` is optional here;
+  without it a random key is kept next to the database (`editor-csrf.key`) for the CSRF tokens.
+
+Then open `https://<your server>/` (it redirects to `/configure/`). `/configure` is the usual
+Stremio addon settings path, so proxy rules that protect addon settings pages cover the editor.
+The editor and `ENABLE_LEGACY` both use `/configure`; with both on the service does not start.
+
+- **Addon URL**: the catalog list shows the manifest URL to paste into AIOMetadata, with a copy
+  button (it contains `ADDON_ACCESS_TOKEN`; this is the only page that shows it).
 
 - **Edit** a catalog in a form generated from the definition fields (sliders for bounded
   limits, an empty box means "off"), or as raw YAML. **Validate** runs the same checks as
@@ -89,15 +105,16 @@ too short, the web service does not start. Then open `https://<your server>/admi
 - **Rollback**: the catalog page lists the published lists; roll back to any that still has its
   payload and was not revoked.
 
-Security: one password, a signed HttpOnly SameSite=Strict cookie (Secure when `PUBLIC_BASE_URL`
+Security (password mode): one password, a signed HttpOnly SameSite=Strict cookie (Secure when `PUBLIC_BASE_URL`
 is https) that lasts 12 hours, a CSRF token on every form, no CORS. Logging out clears the cookie
 in that browser; changing `SESSION_SECRET` ends every session. After 5 failed logins from one
 address (or 20 in all) within 15 minutes, logins are refused until the window passes. Behind a
 reverse proxy every request comes from the proxy unless `FORWARDED_ALLOW_IPS` names it, and then
 someone guessing passwords can keep the login locked for you too, so set it and preferably
-restrict `/admin` at the proxy (IP allow-list or VPN). Forms are refused when the browser's
-`Origin` matches neither the `Host` header nor `PUBLIC_BASE_URL`; behind a proxy that rewrites
-`Host`, set `PUBLIC_BASE_URL` or every form (login included) answers 403.
+restrict `/configure` at the proxy (IP allow-list, VPN or its login). In both modes every form
+carries a CSRF token, nothing has CORS, and forms are refused when the browser's `Origin`
+matches neither the `Host` header nor `PUBLIC_BASE_URL`; behind a proxy that rewrites `Host`,
+set `PUBLIC_BASE_URL` or every form (login included) answers 403.
 
 ## Operations: `/ops`
 
@@ -183,7 +200,7 @@ form, so whoever holds that URL can spend them through this server.
 | `PUBLIC_BASE_URL` | Externally reachable URL of this server |
 | `ADDON_ACCESS_TOKEN` | Secret path segment of the addon URLs (16+ characters); unset means `public` |
 | `OPS_TOKEN` | Bearer token for `/ops`; unset disables it |
-| `ENABLE_EDITOR`, `SESSION_SECRET`, `ADMIN_PASSWORD` | The browser editor at `/admin` (off by default; see below) |
+| `ENABLE_EDITOR`, `EDITOR_AUTH`, `EDITOR_PROXY_USER_HEADER`, `SESSION_SECRET`, `ADMIN_PASSWORD` | The browser editor at `/configure` (off by default; see below) |
 | `BACKUP_DIR`, `BACKUP_KEEP` | Automatic backups; default `/data/backups`, 7 of each kind |
 | `DATABASE_PATH` | SQLite file; default `/data/ai-catalogs.sqlite` on the compose volume, which must be a local disk |
 | `ENABLE_LEGACY` | `true` mounts the upstream addon routes; needs `ENCRYPTION_KEY`. Trusted networks only |

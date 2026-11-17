@@ -155,7 +155,7 @@ def _catalog(conn: sqlite3.Connection, row: sqlite3.Row, now: int) -> dict[str, 
 
 
 def catalog_status(conn: sqlite3.Connection, catalog_id: str, now: int) -> Optional[dict[str, Any]]:
-    """One catalog's entry of ``collect_status`` (the /admin catalog page)."""
+    """One catalog's entry of ``collect_status`` (the /configure catalog page)."""
     row = conn.execute(
         "SELECT catalog_id, name, state, source, last_error, definition_json FROM catalog_defs WHERE catalog_id = ?",
         (catalog_id,),

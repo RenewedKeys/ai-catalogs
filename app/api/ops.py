@@ -42,7 +42,7 @@ def _authorized(request: Request) -> bool:
 
 
 def enqueue(catalog_id: str, kind: str, trigger: str = "ops") -> tuple[int, dict[str, Any]]:
-    """Queue a job with run admission (shared by /ops and /admin). Returns (HTTP status, body)."""
+    """Queue a job with run admission (shared by /ops and /configure). Returns (HTTP status, body)."""
     with db.session() as conn:
         row = conn.execute(
             "SELECT state, definition_json FROM catalog_defs WHERE catalog_id = ?", (catalog_id,)
