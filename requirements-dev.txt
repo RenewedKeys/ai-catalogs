@@ -6,7 +6,7 @@ httpx>=0.24.0
 
 # Code formatting and linting
 black>=23.0.0
-flake8>=6.0.0
+flake8>=7.5.0
 
 # Include all production dependencies
 -r requirements.txt
