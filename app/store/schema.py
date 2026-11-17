@@ -175,6 +175,30 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "CREATE INDEX llm_ledger_by_run ON llm_ledger(run_id)",
         ],
     ),
+    (
+        3,
+        [
+            # Exclusion names resolved to TMDB ids when a definition is applied. Kept out of
+            # definition_json so TMDB drift (votes, new remakes) never changes config_rev or
+            # bumps the epoch. JSON: {"inputs_rev", "blacklist_tmdb_ids", "collection_ids",
+            # "company_ids", "keyword_ids", "title_patterns", "unresolved"}.
+            "ALTER TABLE catalog_defs ADD COLUMN exclusions_json TEXT",
+            # 'file' for definitions applied from catalogs.d (only those are marked removed
+            # when their file disappears); 'fixture' for load-fixture and test catalogs.
+            "ALTER TABLE catalog_defs ADD COLUMN source TEXT NOT NULL DEFAULT 'fixture'",
+            # Definition files that failed validation, by catalog id (the file name stem), so
+            # a new file that never validated still has its error on record. Cleared when the
+            # file validates or disappears.
+            """
+            CREATE TABLE definition_errors (
+                catalog_id TEXT PRIMARY KEY,
+                file       TEXT NOT NULL,
+                error      TEXT NOT NULL,
+                at         INTEGER NOT NULL
+            )
+            """,
+        ],
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

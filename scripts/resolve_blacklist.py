@@ -22,6 +22,9 @@ Output is YAML with ``blacklist_tmdb_ids`` and ``franchise_denylist`` blocks, ev
 plausible candidate on its own line with a comment (title, year, votes). Same-title films
 are all listed (every remake of a title); a year in the input narrows to +/- 1.
 
+Applying a catalog definition resolves the same names automatically, with no review step
+(``app.curation.exclusions``); this script only shows the candidates for inspection.
+
 The script never edits a catalog definition: it writes to stdout or ``--out``, and refuses
 an ``--out`` inside ``catalogs.d/``. The TMDB key comes only from ``TMDB_API_KEY`` (a v4
 read access token or a v3 API key).
@@ -41,18 +44,9 @@ REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from rapidfuzz import fuzz  # noqa: E402
-
 from app.core.logging import describe_error  # noqa: E402
-from app.curation.tmdb_gate import (  # noqa: E402
-    SIMILARITY_THRESHOLD,
-    TMDBClient,
-    TMDBError,
-    clean_title,
-    normalize_title,
-    parse_year,
-    split_title_year,
-)
+from app.curation.exclusions import TitleQuery, named_candidates, title_candidates  # noqa: E402,F401
+from app.curation.tmdb_gate import TMDBClient, TMDBError, clean_title, split_title_year  # noqa: E402
 
 SECTIONS = ("titles", "franchises", "companies", "keywords", "title_patterns")
 # Input section -> (TMDB search endpoint, output key under franchise_denylist).
@@ -68,12 +62,6 @@ MAX_NAMED_CANDIDATES = 8
 
 class InputError(ValueError):
     pass
-
-
-@dataclass
-class TitleQuery:
-    title: str
-    year: int | None = None
 
 
 @dataclass
@@ -123,43 +111,6 @@ def parse_exclusions(text: str) -> Exclusions:
         else:
             getattr(out, section).append(clean_title(line))
     return out
-
-
-def title_candidates(query: TitleQuery, results: list[dict]) -> list[dict]:
-    """Exact normalised matches by votes; fuzzy (>= 0.9) ones only when there is no exact match."""
-    norm = normalize_title(query.title)
-    exact, fuzzy, seen = [], [], set()
-    for r in results:
-        if not isinstance(r.get("id"), int) or r["id"] in seen:
-            continue
-        seen.add(r["id"])
-        year = parse_year(r.get("release_date"))
-        if query.year is not None and (year is None or abs(year - query.year) > 1):
-            continue
-        names = [normalize_title(n) for n in (r.get("title"), r.get("original_title")) if n]
-        entry = {
-            "id": r["id"],
-            "title": r.get("title") or "",
-            "year": year,
-            "vote_count": int(r.get("vote_count") or 0),
-        }
-        if norm in names:
-            exact.append({**entry, "fuzzy": False})
-        elif any(fuzz.ratio(n, norm) >= SIMILARITY_THRESHOLD for n in names):
-            fuzzy.append({**entry, "fuzzy": True})
-    chosen = exact or fuzzy
-    chosen.sort(key=lambda c: (-c["vote_count"], c["id"]))
-    return chosen  # render_yaml shows the first MAX_TITLE_CANDIDATES
-
-
-def named_candidates(query: str, results: list[dict]) -> list[dict]:
-    """Names containing the query as whole words ('Thor' matches 'Thor Collection', not 'Thorn')."""
-    pattern = re.compile(r"\b" + re.escape(normalize_title(query)) + r"\b")
-    out = []
-    for r in results:
-        if isinstance(r.get("id"), int) and pattern.search(normalize_title(r.get("name") or "")):
-            out.append({"id": r["id"], "name": r.get("name") or ""})
-    return out  # render_yaml shows the first MAX_NAMED_CANDIDATES
 
 
 async def resolve_title(client: TMDBClient, query: TitleQuery) -> TitleResult:

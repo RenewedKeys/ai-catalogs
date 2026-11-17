@@ -528,7 +528,8 @@ Secrets and tokens:
   remove `-wal`/`-shm`), start. `catalogs.d/` is config and is backed up as files
   (ideally in git); the README distinguishes "config" from "full state".
   Restore test: back up, mutate, restore, assert active snapshot and history are as backed up.
-- New dependencies, pinned: `PyYAML`, `croniter`, `tzdata` (Alpine has no system zone
+- New dependencies, pinned: `ruamel.yaml` (milestone 5: pure Python, so it installs on
+  `python:3.15-alpine`, where PyYAML has no wheels), `croniter`, `tzdata` (Alpine has no system zone
   database for `zoneinfo`), `rapidfuzz` (title similarity). `jinja2` is already present.
 - **Entrypoint:** the inherited `entrypoint.sh` always execs uvicorn and ignores its
   arguments, so it is rewritten as a dispatcher: with no arguments or `web` it computes
@@ -658,3 +659,30 @@ Implemented on branch `milestone-4-llm`:
   `app.store.jobs.enqueue_job` (rolling 24 h, refreshes only), as built in milestone 2.
 - `scripts/probe_model.py`: tested against a fake transport only; the live probe is
   pending until a session with `OPENAI_API_KEY` runs it.
+
+## 18. Milestone 5 status
+
+Implemented on branch `milestone-5-pipeline`:
+
+- `app/curation/pipeline.py`: section 5 stages 1-12. Classification (stages 4-8) is
+  recomputed from cached TMDB lookups on every pass, so stage counts describe the final pool.
+  Top-ups are one batch per round (at most 60, `3 x gap`) and stop on budget, a provider
+  error, or two rounds that add nothing eligible. After a relaxed window, selection ranks
+  unseen films first, then repeats from the oldest activation. `publish_partial` scales hard
+  quotas down (rounded down). With both `relax` and `publish_partial`, the window is relaxed
+  towards the full count first.
+- `app/curation/definitions.py` + `app/curation/exclusions.py`: the loader (`validate`,
+  `apply`), `ruamel.yaml` (pure Python). Migration 3 adds `catalog_defs.exclusions_json`
+  (resolved ids, outside `config_rev` so TMDB drift never bumps the epoch),
+  `catalog_defs.source` (only `file` catalogs are marked removed) and `definition_errors`
+  (errors of files that never validated). Automatic picks: a title with a year takes the
+  most-voted exact match within +/- 1 year; a bare title takes every exact match (remakes
+  too); fuzzy matches are never auto-picked. If TMDB fails, the definition is not accepted.
+- `app/curation/runner.py`: the shared leased job runner (heartbeat task, cancellation on
+  lost lease and SIGTERM/SIGINT, wall-clock cap `RUN_WALL_CLOCK_S`, recovery at start).
+  The CLI waits at most one lease TTL for a dead holder's lease and leaves the job to a live
+  worker. An explicit `run` claims its own catalog's job even inside a retry backoff.
+- `app/store/maintenance.py`: rollback and history clear.
+- Not done here (milestone 6): worker loop, schedule/catch-up, periodic recovery, `/ops`,
+  `status`, `backup`.
+
