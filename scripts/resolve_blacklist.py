@@ -8,22 +8,19 @@ Generic: nothing about a particular catalog is built in. The input file lists wh
 catalog should never show, in sections (``#`` starts a comment)::
 
     [titles]            # default section; "Title" or "Title (YYYY)" per line
-    The Thing (1982)
-    Total Recall
+    Some Film (1999)
     [franchises]        # resolved to TMDB collections by name
-    Mad Max
-    [companies]         # production companies, e.g. Marvel Studios
-    Lucasfilm
-    [keywords]          # TMDB keywords, e.g. marvel cinematic universe
-    dc extended universe
+    Some Franchise
+    [companies]         # production companies
+    Some Studio
+    [keywords]          # TMDB keywords
+    some keyword
     [title_patterns]    # regexes, copied through unchanged
-    \\bstar wars\\b
-
-``docs/examples/cult-picks-exclusions.txt`` is the example catalog's list.
+    \\bsome pattern\\b
 
 Output is YAML with ``blacklist_tmdb_ids`` and ``franchise_denylist`` blocks, every
 plausible candidate on its own line with a comment (title, year, votes). Same-title films
-are all listed (The Thing 1982 / 2011); a year in the input narrows to +/- 1.
+are all listed (every remake of a title); a year in the input narrows to +/- 1.
 
 The script never edits a catalog definition: it writes to stdout or ``--out``, and refuses
 an ``--out`` inside ``catalogs.d/``. The TMDB key comes only from ``TMDB_API_KEY`` (a v4

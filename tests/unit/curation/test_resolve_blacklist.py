@@ -18,7 +18,6 @@ from tests.unit.curation.tmdb_fake import FakeTMDB
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "resolve_blacklist.py"
-EXAMPLE = ROOT / "docs" / "examples" / "cult-picks-exclusions.txt"
 spec = importlib.util.spec_from_file_location("resolve_blacklist", SCRIPT)
 rb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rb)
@@ -81,11 +80,13 @@ class TestParse:
         assert not hasattr(rb, "DEFAULT_TITLES") and not hasattr(rb, "FRANCHISES")
         assert rb.parse_exclusions("") == rb.Exclusions()
 
-    def test_example_file_parses(self):
-        ex = rb.parse_exclusions(EXAMPLE.read_text())
-        assert len(ex.titles) == 39 and "Mad Max" in ex.franchises and "Lucasfilm" in ex.companies
+    def test_no_catalog_data_ships_with_the_tool(self):
+        assert not (ROOT / "docs" / "examples").exists()
+
+    def test_patterns_feed_the_gate_denylist(self):
+        ex = rb.parse_exclusions("[title_patterns]\n\\bsome saga\\b\n")
         deny = FranchiseDenylist(title_patterns=ex.title_patterns)
-        assert deny.title_matches("Star Wars: A New Hope") and not deny.title_matches("Starship Troopers")
+        assert deny.title_matches("Some Saga: Part II") and not deny.title_matches("Awesome Sagas")
 
 
 class TestCandidates:
