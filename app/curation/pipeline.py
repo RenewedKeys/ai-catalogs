@@ -18,6 +18,9 @@ Stages, over one candidate pool kept for the whole run:
 6.    Dedupe on resolved ids (one entry per ``tmdb_id`` and per ``imdb_id``).
 7.    Gatekeeper on the details (``tmdb_gate.evaluate``), every rejection counted by reason.
 8.    History filter on ``tmdb_id`` / ``imdb_id`` (authoritative); matches are held too.
+      With ``exclude_watched``, the viewer's watched films (``app.curation.watched``, loaded
+      once at setup) are rejected as ``watched`` right after resolution (before the details
+      lookup) and again on the IMDb id from the details. Never held: relax cannot re-admit them.
 9.    Selection (``select``): deterministic given the seed; caps and quotas.
 10.   Top-up loop while short (computed *after* selection) or a hard quota is unmet, and
       budget remains: one batch per round naming the unmet quotas; then 3-9 again over the
@@ -56,6 +59,7 @@ from app.curation.tmdb_gate import (
     split_title_year,
     to_candidate,
 )
+from app.curation.watched import WatchedError, WatchedSet, load_watched
 from app.store import db
 from app.store.catalogs import SnapshotItem, window_activation_ids
 
@@ -339,6 +343,7 @@ class Pipeline:
         llm: Any,
         gate: TMDBGate,
         db_path: Optional[str] = None,
+        watched_client_factory: Optional[Callable[[], Any]] = None,
     ):
         self.catalog_id = catalog_id
         self.definition = dict(definition)
@@ -348,6 +353,8 @@ class Pipeline:
         self.llm = llm
         self.gate = gate
         self.db_path = db_path
+        self.watched_client_factory = watched_client_factory
+        self.watched: Optional[WatchedSet] = None  # set at setup when exclude_watched
         self.settings = RunSettings.from_definition(self.definition)
         self.limits = limits_from_definition(self.definition)
 
@@ -393,6 +400,23 @@ class Pipeline:
 
         self.history = await asyncio.to_thread(_load)
         self.size = self.history.runs
+        if self.definition.get("exclude_watched") is True:
+            await self._load_watched()
+
+    async def _load_watched(self) -> None:
+        """Before any model call, so a missing key or an MDBList outage spends no budget."""
+        if self.watched_client_factory is None:
+            raise PipelineFailure("config", detail="exclude_watched needs a watched-history source")
+        try:
+            self.watched = await load_watched(self.watched_client_factory, db_path=self.db_path)
+        except WatchedError as e:
+            if e.category == "config":
+                raise PipelineFailure("config", detail="exclude_watched is set but MDBLIST_API_KEY is not") from None
+            logger.warning("[%s] watched history unavailable: %s", self.catalog_id, e.category)
+            raise PipelineFailure(e.category, status=e.status_code, transient=e.transient) from None
+
+    def _is_watched(self, tmdb_id: Optional[int] = None, imdb_id: Optional[str] = None) -> bool:
+        return self.watched is not None and self.watched.contains(tmdb_id, imdb_id)
 
     # ---------------------------------------------------------------- stages 1-3
 
@@ -411,6 +435,7 @@ class Pipeline:
                 unmet=list(unmet),
                 target_count=self.settings.target_count,
                 request_count=request_count,
+                watched=self.watched.titles if self.watched is not None else (),
             )
         except PromptError:
             raise PipelineFailure("config", detail="prompt failed to render") from None
@@ -466,7 +491,9 @@ class Pipeline:
         results = await asyncio.gather(*(self.gate.resolve(*k_title) for k_title in self._titles(to_resolve)))
         for key, tmdb_id in zip(to_resolve, results):
             self._resolved[key] = tmdb_id
-        ids = sorted({t for t in self._resolved.values() if t is not None and t not in self._details})
+        ids = sorted(
+            {t for t in self._resolved.values() if t is not None and t not in self._details and not self._is_watched(t)}
+        )
         details = await asyncio.gather(*(self.gate.details(t) for t in ids))
         self._details.update(zip(ids, details))
 
@@ -499,6 +526,9 @@ class Pipeline:
                 counts["duplicate_id"] += 1
                 continue
             seen_tmdb.add(tmdb_id)
+            if self._is_watched(tmdb_id):
+                rejects["watched"] += 1
+                continue
             details = self._details.get(tmdb_id)
             if details is None:
                 rejects["not_found"] += 1
@@ -512,6 +542,9 @@ class Pipeline:
                 counts["duplicate_id"] += 1
                 continue
             seen_imdb.add(candidate.imdb_id)
+            if self._is_watched(imdb_id=candidate.imdb_id):
+                rejects["watched"] += 1
+                continue
             index = self.history.id_index(candidate.tmdb_id, candidate.imdb_id)
             if index is not None and index < self.size:
                 held_id += 1
@@ -641,6 +674,10 @@ class Pipeline:
                 rx.search(t) for rx in self.title_patterns for t in (candidate.title, candidate.original_title) if t
             ):
                 raise fail(f"tmdb {p.tmdb_id} matches a franchise title pattern")
+            if self.definition.get("exclude_watched") is True and (
+                self.watched is None or self.watched.contains(p.tmdb_id, p.imdb_id)
+            ):
+                raise fail(f"tmdb {p.tmdb_id} is a watched film")
             if self.history.id_index(p.tmdb_id, p.imdb_id) is not None and (
                 self.history.id_index(p.tmdb_id, p.imdb_id) < self.size
             ):
@@ -690,6 +727,8 @@ class Pipeline:
                 counts["unmet_soft"] = sum(selection.unmet_soft.values())
         if self.budget_stop is not None:
             counts["stopped_by_budget"] = 1
+        if self.watched is not None:
+            counts["watched_known"] = len(self.watched)
         relaxed = getattr(self, "relaxed_window", None)
         return {
             "stage_counts_json": json.dumps(counts, sort_keys=True),
