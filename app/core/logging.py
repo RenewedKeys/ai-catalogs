@@ -1,5 +1,5 @@
 """
-Logging configuration for the Stremio AI Companion application.
+Logging configuration.
 """
 
 import logging
@@ -42,7 +42,7 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
     logging.getLogger("openai").setLevel(logging.WARNING)  # its DEBUG logs include request bodies
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
-    return logging.getLogger("stremio_ai_companion")
+    return logging.getLogger("ai_catalogs")
 
 
 # Initialize logger with environment variable or default to INFO

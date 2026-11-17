@@ -50,7 +50,7 @@ def _manifest(catalogs) -> dict:
         "behaviorHints": {"configurable": False, "configurationRequired": False},
     }
     if settings.PUBLIC_BASE_URL:
-        manifest["logo"] = f"{settings.PUBLIC_BASE_URL}/static/logo2_256.png"
+        manifest["logo"] = f"{settings.PUBLIC_BASE_URL}/static/logo_256.png"
         manifest["background"] = f"{settings.PUBLIC_BASE_URL}/static/background.png"
     return manifest
 

@@ -21,7 +21,7 @@ ORIGIN = {"Origin": "https://elsewhere.example"}
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(settings, "OPS_TOKEN", TOKEN)
-    return TestClient(create_app(enable_legacy=False))
+    return TestClient(create_app())
 
 
 def add_catalog(catalog_id="example", state="enabled", **extra):
@@ -33,7 +33,7 @@ def add_catalog(catalog_id="example", state="enabled", **extra):
 
 def test_unset_token_hides_every_ops_path(monkeypatch):
     monkeypatch.setattr(settings, "OPS_TOKEN", None)
-    client = TestClient(create_app(enable_legacy=False))
+    client = TestClient(create_app())
     for method, path in [("GET", "/ops/status"), ("POST", "/ops/catalogs/example/refresh"), ("GET", "/ops/nope")]:
         r = client.request(method, path, headers={**AUTH, **ORIGIN})
         assert r.status_code == 404

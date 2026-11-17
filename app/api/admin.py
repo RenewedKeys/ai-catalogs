@@ -111,11 +111,9 @@ def proxy_mode() -> bool:
     return settings.EDITOR_AUTH == "proxy"
 
 
-def check_editor_settings(enable_legacy: Optional[bool] = None) -> None:
+def check_editor_settings() -> None:
     if not settings.ENABLE_EDITOR:
         return
-    if settings.ENABLE_LEGACY if enable_legacy is None else enable_legacy:
-        raise EditorConfigError("ENABLE_EDITOR and ENABLE_LEGACY both use /configure; turn one of them off")
     secret = settings.SESSION_SECRET or ""
     if proxy_mode():
         if not settings.EDITOR_PROXY_USER_HEADER.strip():

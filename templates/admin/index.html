@@ -19,7 +19,7 @@
       <td><a href="{{ prefix }}/catalogs/{{ c.catalog_id }}">{{ c.name }}</a><br><span class="muted">{{ c.catalog_id }}</span></td>
       <td>{{ "editor" if c.source == "editor" else ("file" if c.source == "file" else c.source) }}</td>
       <td>{{ c.state }}{% if c.last_error %} <span class="error">· definition error</span>{% endif %}</td>
-      <td>{% if c.active_snapshot %}{{ c.active_snapshot.items }} items, {{ c.active_snapshot.created_at }}{% else %}<span class="muted">none</span>{% endif %}</td>
+      <td>{% if c.active_snapshot %}{{ c.active_snapshot["items"] }} items, {{ c.active_snapshot.created_at }}{% else %}<span class="muted">none</span>{% endif %}</td>
       <td>{% if run %}{{ run.kind }} · {{ run.status }}{% if run.error_category %} <span class="error">{{ run.error_category }}</span>{% endif %}{% else %}<span class="muted">-</span>{% endif %}</td>
     </tr>
   {% endfor %}

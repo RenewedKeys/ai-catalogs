@@ -94,8 +94,8 @@ done
 echo "ok: worker health check is healthy"
 
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/configure")
-[ "$code" = "404" ] || { echo "/configure answered $code with legacy off" >&2; exit 1; }
-echo "ok: legacy routes are not mounted"
+[ "$code" = "404" ] || { echo "/configure answered $code with the editor off" >&2; exit 1; }
+echo "ok: the editor is off by default"
 
 base="http://localhost:$PORT/c/public"
 json_get() { curl -fsS "$1" | python3 -c "import json, sys; print($2)"; }

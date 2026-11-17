@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2a6b"/>
+      <stop offset="1" stop-color="#5b2a86"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dfe6ff"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffe27a"/>
+      <stop offset="1" stop-color="#ff9e3d"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- three stacked poster cards: a curated list -->
+  <g transform="translate(512 560)">
+    <rect x="-330" y="-250" width="250" height="370" rx="34" fill="url(#card)" opacity="0.4" transform="rotate(-12 -205 -65)"/>
+    <rect x="80" y="-250" width="250" height="370" rx="34" fill="url(#card)" opacity="0.4" transform="rotate(12 205 -65)"/>
+    <rect x="-145" y="-300" width="290" height="430" rx="40" fill="url(#card)"/>
+    <!-- list lines on the front card -->
+    <rect x="-95" y="-220" width="190" height="26" rx="13" fill="#1b2a6b" opacity="0.85"/>
+    <rect x="-95" y="-160" width="150" height="22" rx="11" fill="#1b2a6b" opacity="0.45"/>
+    <rect x="-95" y="-108" width="170" height="22" rx="11" fill="#1b2a6b" opacity="0.45"/>
+    <rect x="-95" y="-56" width="120" height="22" rx="11" fill="#1b2a6b" opacity="0.45"/>
+    <!-- play triangle -->
+    <path d="M -38 10 L 52 62 L -38 114 Z" fill="#5b2a86" opacity="0.9"/>
+  </g>
+  <!-- AI spark -->
+  <g transform="translate(760 250)">
+    <path d="M0 -130 C 18 -40 40 -18 130 0 C 40 18 18 40 0 130 C -18 40 -40 18 -130 0 C -40 -18 -18 -40 0 -130 Z" fill="url(#spark)"/>
+    <path d="M-150 -95 C -144 -70 -137 -63 -112 -57 C -137 -51 -144 -44 -150 -19 C -156 -44 -163 -51 -188 -57 C -163 -63 -156 -70 -150 -95 Z" fill="#ffe27a"/>
+  </g>
+</svg>

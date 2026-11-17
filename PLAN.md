@@ -974,3 +974,27 @@ at startup ("Cannot open the database") until someone ran `chown`.
 - Tests: `tests/unit/test_privileges.py`; the Compose smoke test checks both services run as
   uid 1000, nothing on the volume is root-owned after a CLI run through `docker exec`, and a
   volume made root-owned is handed back on restart (database still served, lease retaken).
+
+## 25. Upstream code removed, new look
+
+Asked by the owner: nothing from the upstream fork should remain that this app does not use.
+
+- Removed the legacy addon (`ENABLE_LEGACY`): `app/api/web.py`, `app/api/stremio.py`,
+  `app/api/deps.py`, `app/services/`, `app/models/`, `app/utils/`, its templates, `docs/LEGACY.md`,
+  `WORKER_CONFIGURATION.md`, the upstream `CHANGELOG.md` and `.github/cliff.toml`, the unused
+  `.github/labeler.yml` and stale-issue workflow, their tests, and the settings only they read
+  (`ENABLE_LEGACY`, `ENCRYPTION_KEY`, `RPDB_API_KEY`, `REDIS_*`, `STREMIO_ADDON_ID`,
+  `PREFERRED_USER_SEARCH_LANGUAGE`, `MAX_CATALOG_*`, `SPLIT_MANIFESTS`, `ENABLE_FEED_CATALOGS`,
+  `CACHE_SEARCH_QUERY_TTL`, `FOOTER_ENABLED`). Dependencies dropped: `cryptography`, `redis`,
+  `python-slugify`, `python-dateutil`. `create_app()` takes no arguments; the logger is
+  `ai_catalogs`. `LICENSE` keeps the upstream copyright line, as MIT requires.
+- New artwork in `.assets/` (sources in `.assets/src/`): `logo_256.png`, `logo_1024.png`,
+  `background.png` (1920x1080); the manifest points at `logo_256.png`.
+- The image now contains an empty `/app/catalogs.d`, so a deployment that only uses the editor
+  needs no mount and logs no "directory does not exist" warning.
+- `README.md` is a short, non-technical tour with screenshots (placeholder catalogs only); the
+  previous README is `docs/setup.md`.
+- Fixed while taking the screenshots: the editor showed `<built-in method items ...>` instead of
+  a list's size (Jinja resolves `x.items` to `dict.items`); templates now use `x["items"]`, with
+  a regression test.
+- Merged remote branches deleted on GitHub (their PRs keep a restore button).

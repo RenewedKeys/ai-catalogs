@@ -46,7 +46,7 @@ def editor_on(monkeypatch, tmp_path):
 
 @pytest.fixture
 def app(editor_on, tmdb):
-    application = create_app(enable_legacy=False)
+    application = create_app()
     application.state.admin_app.state.tmdb_client_factory = tmdb.client
     return application
 
@@ -103,7 +103,7 @@ def post_form(client, path, definition_values, **extra):
 
 def test_disabled_by_default_every_path_404(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_EDITOR", False)
-    c = TestClient(create_app(enable_legacy=False), follow_redirects=False)
+    c = TestClient(create_app(), follow_redirects=False)
     paths = [
         ("GET", "/configure"),
         ("GET", "/configure/"),
@@ -126,14 +126,14 @@ def test_startup_fails_without_strong_secrets(monkeypatch, secret, password):
     monkeypatch.setattr(settings, "SESSION_SECRET", secret)
     monkeypatch.setattr(settings, "ADMIN_PASSWORD", password)
     with pytest.raises(admin_mod.EditorConfigError):
-        create_app(enable_legacy=False)
+        create_app()
 
 
 def test_secret_length_is_counted_in_bytes(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_EDITOR", True)
     monkeypatch.setattr(settings, "SESSION_SECRET", "é" * 16)  # 16 characters, 32 bytes
     monkeypatch.setattr(settings, "ADMIN_PASSWORD", PASSWORD)
-    create_app(enable_legacy=False)
+    create_app()
 
 
 # --------------------------------------------------------------------------- auth
@@ -732,7 +732,7 @@ def test_missing_tmdb_key_is_a_validation_error(client, app, monkeypatch):
     assert catalog_row("excl") is None
 
 
-# --------------------------------------------------------------------------- site root, legacy, addon URL
+# --------------------------------------------------------------------------- site root, addon URL
 
 
 def test_site_root_redirects_to_the_editor(anon):
@@ -743,12 +743,7 @@ def test_site_root_redirects_to_the_editor(anon):
 
 def test_site_root_is_404_with_the_editor_off(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_EDITOR", False)
-    assert TestClient(create_app(enable_legacy=False)).get("/").status_code == 404
-
-
-def test_editor_and_legacy_cannot_both_be_on(editor_on):
-    with pytest.raises(admin_mod.EditorConfigError, match="ENABLE_LEGACY"):
-        create_app(enable_legacy=True)
+    assert TestClient(create_app()).get("/").status_code == 404
 
 
 def test_index_shows_the_addon_url(client, monkeypatch):
@@ -791,7 +786,7 @@ def proxy_on(editor_on, monkeypatch, tmp_path):
 
 @pytest.fixture
 def proxy_app(proxy_on, tmdb):
-    application = create_app(enable_legacy=False)
+    application = create_app()
     application.state.admin_app.state.tmdb_client_factory = tmdb.client
     return application
 
@@ -808,13 +803,13 @@ def test_proxy_mode_starts_without_password_or_secret(proxy_app):
 def test_proxy_mode_still_rejects_a_short_secret_when_one_is_set(proxy_on, monkeypatch):
     monkeypatch.setattr(settings, "SESSION_SECRET", "short")
     with pytest.raises(admin_mod.EditorConfigError):
-        create_app(enable_legacy=False)
+        create_app()
 
 
 def test_proxy_mode_needs_a_header_name(proxy_on, monkeypatch):
     monkeypatch.setattr(settings, "EDITOR_PROXY_USER_HEADER", " ")
     with pytest.raises(admin_mod.EditorConfigError):
-        create_app(enable_legacy=False)
+        create_app()
 
 
 def test_proxy_mode_fails_closed_without_the_user_header(proxy_app):
@@ -854,7 +849,7 @@ def test_proxy_mode_has_no_login_or_logout(proxied):
 
 def test_proxy_mode_header_name_is_configurable(proxy_on, tmdb, monkeypatch):
     monkeypatch.setattr(settings, "EDITOR_PROXY_USER_HEADER", "X-Forwarded-User")
-    c = TestClient(create_app(enable_legacy=False), follow_redirects=False)
+    c = TestClient(create_app(), follow_redirects=False)
     assert c.get("/configure/", headers=USER).status_code == 403
     assert c.get("/configure/", headers={"X-Forwarded-User": "owner"}).status_code == 200
 
@@ -886,6 +881,26 @@ def test_proxy_mode_key_file_is_private_and_shared(proxied, proxy_on, proxy_app)
 
 def test_proxy_mode_uses_session_secret_when_set(proxy_on, monkeypatch, tmdb):
     monkeypatch.setattr(settings, "SESSION_SECRET", SECRET)
-    c = TestClient(create_app(enable_legacy=False), follow_redirects=False, headers=USER)
+    c = TestClient(create_app(), follow_redirects=False, headers=USER)
     assert c.get("/configure/").status_code == 200
     assert not (proxy_on / "editor-csrf.key").exists()
+
+
+def test_list_sizes_are_shown_as_numbers(client):
+    """Jinja's `x.items` is dict.items, not the "items" key: pages must show the count."""
+    add_catalog()
+    with db.session() as conn, db.transaction(conn):
+        rev = catalog_row("alpha_list")["config_rev"]
+        publish_snapshot(
+            conn, "alpha_list", [SnapshotItem(f"tt{9000000 + i}", f"Film {i}", 2001) for i in range(3)], config_rev=rev
+        )
+        publish_snapshot(
+            conn, "alpha_list", [SnapshotItem(f"tt{9100000 + i}", f"Film {i}", 2001) for i in range(4)], config_rev=rev
+        )
+    pages = [client.get(p).text for p in ("/configure/", "/configure/catalogs/alpha_list")]
+    pages.append(client.get("/configure/catalogs/alpha_list/rollback/1").text)
+    for html in pages:
+        assert "built-in method" not in html
+    assert "4 items" in pages[0]
+    assert "<td>3</td>" in pages[1] and "<td>4</td>" in pages[1]
+    assert "3 items" in pages[2]
