@@ -36,6 +36,7 @@ import sys
 from typing import Optional
 
 from app.core.config import settings
+from app.core.privileges import drop_root
 from app.curation.budget import BudgetLimits
 from app.curation.definitions import LoaderError, apply_dir, report_lines, validate_dir
 from app.curation.runner import Runner, Services
@@ -278,6 +279,7 @@ def _history_clear(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    drop_root()  # `docker exec` runs as root; never leave root-owned files on the volume
     parser = argparse.ArgumentParser(prog="python -m app.curation")
     sub = parser.add_subparsers(dest="command", required=True)
 

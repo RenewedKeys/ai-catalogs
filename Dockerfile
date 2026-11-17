@@ -7,7 +7,8 @@ RUN apk add --no-cache \
     gcc \
     musl-dev \
     libffi-dev \
-    openssl-dev
+    openssl-dev \
+    su-exec
 
 # Copy requirements first for better caching
 COPY requirements.txt .
@@ -16,12 +17,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Non-root user; /data holds durable state (a named volume in docker-compose.yml)
+# /data holds durable state. The container starts as root only so the entrypoint can give
+# /data to PUID:PGID (default 1000:1000, the appuser below), then runs the service as that
+# user; the CLI drops root the same way (app/core/privileges.py). Like linuxserver images.
 RUN chmod +x /app/entrypoint.sh \
     && adduser -D -u 1000 appuser \
     && mkdir -p /data \
-    && chown -R appuser:appuser /app /data
-USER appuser
+    && chown -R appuser:appuser /data
 
 EXPOSE 8000
 
