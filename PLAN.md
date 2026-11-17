@@ -309,7 +309,16 @@ exhausted) fail immediately with no retry.
   old definition stays in force) unless the template renders against a sample context.
 - Variables: `today`, `weekday`, `day_of_month`, `month_name`, `year`, `seed`,
   `target_count`, `request_count`, `focus`, `categories` (shuffled), `anchors` (shuffled),
-  `exclusions` (rendered block), `already_this_run`, `unmet` (top-up rounds).
+  `exclusions` (rendered block), `already_this_run`, `unmet` (top-up rounds), and
+  `limits` (below).
+- **Limits feed the prompt as well as the gate.** The purpose of the tool is accurate
+  catalogs from complex free-form prompts plus adjustable limits (sliders in the v2
+  editor). Every limit a catalog sets (rating and vote floor, year range, runtime,
+  languages, excluded genres, caps, quotas) is (1) rendered into a plain-language
+  constraints block appended to the prompt, so the model aims inside the limits and fewer
+  generations are wasted, and (2) enforced in code by the gatekeeper and selection, which
+  remain the guarantee. One source of truth: both are generated from the same definition
+  fields, and the template can also reference them directly (e.g. `{{ limits.year_min }}`).
 - `seed` = hash(date, catalog id, per-run random nonce); it drives the category/anchor
   shuffle, the per-category "angle" hint, and the final shuffle, and is stored in `runs`.
 - Prompt-side history exclusion: at most `history_prompt_limit` (default 150) most recent
