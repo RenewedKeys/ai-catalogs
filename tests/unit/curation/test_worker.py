@@ -151,7 +151,7 @@ async def test_file_changes_and_sighup_reapply_definitions(catalogs, films):
 
     (catalogs / f"{CID}.yaml").unlink()
     await until(lambda: q("SELECT state FROM catalog_defs")[0]["state"] == "removed", what="removal")
-    assert q("SELECT * FROM schedule") == []
+    await until(lambda: q("SELECT * FROM schedule") == [], what="the schedule row to go")  # same tick, after apply
 
     # SIGHUP path: an edit the signature cannot see (same name, size and mtime) is applied on request.
     (catalogs / "other.yaml").write_text(YAML)
