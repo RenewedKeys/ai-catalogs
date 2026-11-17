@@ -5,7 +5,7 @@ Application configuration settings for the Stremio AI Companion.
 import os
 from functools import lru_cache
 from app import __version__
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.models.enums import Languages
 
@@ -18,10 +18,19 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", env_prefix="")
 
     # Application settings
-    APP_NAME: str = Field(default="Stremio AI Companion")
+    APP_NAME: str = Field(default="AI Catalogs")
     APP_VERSION: str = Field(default=__version__)
-    APP_DESCRIPTION: str = Field(default="Your AI-powered movie discovery companion for Stremio")
-    STREMIO_ADDON_ID: str = Field(default="ai.companion.stremio", description="Stremio addon ID")
+    APP_DESCRIPTION: str = Field(default="Curated, daily-rotating AI catalogs for Stremio")
+    STREMIO_ADDON_ID: str = Field(
+        default="community.ai-catalogs.legacy", description="Stremio addon ID of the legacy (upstream) addon"
+    )
+    PUBLIC_BASE_URL: str | None = Field(
+        default=None, description="Externally reachable base URL, e.g. https://catalogs.example.org (no trailing slash)"
+    )
+
+    # Legacy (upstream stremio-ai-companion) surface: /configure, /save-config, /config/{blob}/...
+    # Off by default. Only enable it on a trusted network.
+    ENABLE_LEGACY: bool = Field(default=False, description="Mount the upstream configure UI and per-user routes")
 
     # Server settings
     HOST: str = Field(default="0.0.0.0")
@@ -31,7 +40,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO")
 
     # Security
-    ENCRYPTION_KEY: str = Field(description="Required encryption key for securing configuration data", min_length=4)
+    ENCRYPTION_KEY: str | None = Field(
+        default=None, description="Encryption key for legacy config URLs; required when ENABLE_LEGACY is true"
+    )
 
     # API settings
     OPENAI_API_KEY: str | None = Field(default=None)
@@ -62,6 +73,14 @@ class Settings(BaseSettings):
     # Customizing
     FOOTER_ENABLED: bool = Field(default=True, description="Show footer on pages")
 
+    @model_validator(mode="after")
+    def _legacy_needs_encryption_key(self):
+        if self.ENABLE_LEGACY and (not self.ENCRYPTION_KEY or len(self.ENCRYPTION_KEY) < 4):
+            raise ValueError("ENCRYPTION_KEY (at least 4 characters) is required when ENABLE_LEGACY is true")
+        if self.PUBLIC_BASE_URL:
+            self.PUBLIC_BASE_URL = self.PUBLIC_BASE_URL.rstrip("/")
+        return self
+
 
 class TestSettings(Settings):
     """
@@ -75,7 +94,11 @@ class TestSettings(Settings):
     model_config = SettingsConfigDict(extra="ignore", env_file=None, env_prefix="TEST_")
 
     # Override required field with test default
-    ENCRYPTION_KEY: str = Field(default="test-encryption-key-for-testing")
+    ENCRYPTION_KEY: str | None = Field(default="test-encryption-key-for-testing")
+
+    # The inherited test suite exercises the legacy routes through the module-level app.
+    # Tests of the default (legacy off) behaviour build their own app with create_app().
+    ENABLE_LEGACY: bool = Field(default=True)
 
 
 @lru_cache()

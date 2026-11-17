@@ -12,7 +12,7 @@ from slugify import slugify
 
 from app.api.deps import get_config, rpdb_response
 from app.core.config import settings
-from app.core.logging import logger
+from app.core.logging import describe_error, logger
 from app.models.config import Config
 from app.models.enums import ContentType
 from app.models.movie import MovieSuggestion, TVSeriesSuggestion, StremioResponse
@@ -93,7 +93,7 @@ async def _process_metadata_pipeline(
         return metas
 
     except Exception as e:
-        logger.error(f"Metadata pipeline failed: {e}")
+        logger.error(f"Metadata pipeline failed: {describe_error(e)}")
         return []
 
 
@@ -180,17 +180,20 @@ def build_manifest(
                             }
                         )
 
-    return {
+    manifest = {
         "id": addon_id,
         "version": settings.APP_VERSION,
         "name": name,
         "description": description,
-        "logo": "https://raw.githubusercontent.com/willtho89/stremio-ai-companion/refs/heads/main/.assets/logo2_256.png",
-        "background": "https://raw.githubusercontent.com/willtho89/stremio-ai-companion/refs/heads/main/.assets/background.png",
         "resources": ["catalog"],
         "types": types,
         "catalogs": catalogs,
     }
+    # Artwork is served from this server's own /static, which needs an absolute URL.
+    if settings.PUBLIC_BASE_URL:
+        manifest["logo"] = f"{settings.PUBLIC_BASE_URL}/static/logo2_256.png"
+        manifest["background"] = f"{settings.PUBLIC_BASE_URL}/static/background.png"
+    return manifest
 
 
 # --- Shared helpers -----------------------------------------------------------
@@ -347,8 +350,9 @@ async def _process_catalog_request_internal(
         return result
 
     except Exception as e:
-        logger.error(f"Catalog request failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # The detail stays generic: provider error messages can quote the API key.
+        logger.error(f"Catalog request failed: {describe_error(e)}")
+        raise HTTPException(status_code=500, detail="Catalog request failed")
 
 
 async def _process_catalog_request(
@@ -375,7 +379,10 @@ async def _cached_catalog(
     Cached version of the catalogue view with pagination support (Redis only).
     """
     cache = CACHE_INSTANCE
-    catalog_config = CATALOG_PROMPTS.get(catalog_id.rstrip(f"_{content_type.value}"), CATALOG_PROMPTS.get("trending"))
+    # removesuffix, not rstrip: rstrip strips a character set and mangles ids such as "movie_movie".
+    catalog_config = CATALOG_PROMPTS.get((catalog_id or "").removesuffix(f"_{content_type.value}"))
+    if catalog_config is None:
+        raise HTTPException(status_code=404, detail="Unknown catalog")
     prompt = catalog_config["prompt"]
 
     # Get TTL for this specific catalog

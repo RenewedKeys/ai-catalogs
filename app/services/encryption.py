@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import HTTPException
 
 from app.core.config import settings
-from app.core.logging import logger
+from app.core.logging import describe_error, logger
 
 
 class EncryptionService:
@@ -30,7 +30,10 @@ class EncryptionService:
             password: The password to use for encryption/decryption.
                      If not provided, uses the value from settings.
         """
-        self.password = (password or settings.ENCRYPTION_KEY).encode()
+        key = password or settings.ENCRYPTION_KEY
+        if not key:
+            raise RuntimeError("ENCRYPTION_KEY is not set; it is required by the legacy config routes")
+        self.password = key.encode()
 
     def _get_key(self, salt: bytes) -> bytes:
         """
@@ -87,7 +90,7 @@ class EncryptionService:
             f = Fernet(key)
             return f.decrypt(encrypted).decode()
         except Exception as e:
-            logger.error(f"Failed to decrypt config data: {e}")
+            logger.error(f"Failed to decrypt config data: {describe_error(e)}")
             raise HTTPException(status_code=400, detail="Invalid config data")
 
 

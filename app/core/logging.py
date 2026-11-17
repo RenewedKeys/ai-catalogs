@@ -45,3 +45,17 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
 
 # Initialize logger with environment variable or default to INFO
 logger = setup_logging(os.getenv("LOG_LEVEL", "INFO"))
+
+
+def describe_error(error: BaseException) -> str:
+    """
+    A log-safe description of an exception: its type and, when present, an HTTP status code.
+
+    Never log ``str(error)`` for errors from providers, HTTP clients or config parsing. Their
+    messages can quote API keys, request URLs that embed a key, or submitted form values.
+    """
+    status = getattr(error, "status_code", None)
+    if status is None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+    name = type(error).__name__
+    return f"{name} (HTTP {status})" if isinstance(status, int) else name

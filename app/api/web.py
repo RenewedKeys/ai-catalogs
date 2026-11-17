@@ -3,6 +3,7 @@ Web UI routes for the Stremio AI Companion application.
 """
 
 import json
+from types import SimpleNamespace
 from typing import Optional
 
 from fastapi import APIRouter, Request, Form, HTTPException, Query
@@ -11,7 +12,7 @@ from pydantic import ValidationError
 from starlette.templating import Jinja2Templates
 
 from app.core.config import settings
-from app.core.logging import logger
+from app.core.logging import describe_error, logger
 from app.models.config import Config
 from app.models.enums import LLMProvider, Languages
 from app.services import CATALOG_PROMPTS
@@ -63,13 +64,47 @@ def get_request_scheme(request: Request) -> str:
 router = APIRouter(tags=["Web UI"])
 templates = Jinja2Templates(directory="templates")
 
+# Config fields that hold credentials. They are never sent to a template.
+SECRET_CONFIG_FIELDS = {"openai_api_key", "tmdb_read_access_token", "posterdb_api_key"}
+
+
+def public_settings() -> SimpleNamespace:
+    """
+    The only settings a template may see.
+
+    Templates used to receive the whole settings object, which let the unauthenticated
+    /configure page print the server's API keys into the HTML. Add a field here only if it
+    is safe to show to anyone who can reach the server.
+    """
+    return SimpleNamespace(
+        APP_NAME=settings.APP_NAME,
+        APP_VERSION=settings.APP_VERSION,
+        FOOTER_ENABLED=settings.FOOTER_ENABLED,
+        OPENAI_BASE_URL=settings.OPENAI_BASE_URL,
+        DEFAULT_MODEL=settings.DEFAULT_MODEL,
+        PREFERRED_USER_SEARCH_LANGUAGE=settings.PREFERRED_USER_SEARCH_LANGUAGE,
+        MAX_CATALOG_RESULTS=settings.MAX_CATALOG_RESULTS,
+    )
+
+
+def _same_base_url(a: Optional[str], b: Optional[str]) -> bool:
+    return bool(a) and bool(b) and a.strip().rstrip("/").lower() == b.strip().rstrip("/").lower()
+
+
+def _scrub(text: str, secrets: list[Optional[str]]) -> str:
+    """Remove credentials from a message before it is returned to the client."""
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "****")
+    return text
+
 
 @router.get("/", response_class=HTMLResponse)
 async def homepage(request: Request):
     """
     Render the homepage with application description and configuration options.
     """
-    return templates.TemplateResponse("index.html", {"request": request, "settings": settings})
+    return templates.TemplateResponse(request, "index.html", {"settings": public_settings()})
 
 
 @router.get("/configure", response_class=HTMLResponse)
@@ -85,17 +120,38 @@ async def configure_page(request: Request, config: Optional[str] = Query(None), 
         try:
             config_data = encryption_service.decrypt(config)
             existing_config = Config.model_validate(json.loads(config_data))
-        except Exception as e:
-            # If config is invalid, just show empty form
-            logger.warning(f"Invalid config provided to configure page: {e}")
+        except HTTPException:
             raise
+        except Exception as e:
+            logger.warning(f"Invalid config provided to configure page: {describe_error(e)}")
+            raise HTTPException(status_code=400, detail="Invalid config data")
+
+    # Credentials are never rendered, neither the server's nor the ones inside an existing
+    # config. The form only learns whether a stored value exists; leaving a field blank
+    # keeps it (see save_config).
+    if existing_config:
+        stored = {
+            "openai": bool(existing_config.openai_api_key),
+            "tmdb": bool(existing_config.tmdb_read_access_token),
+            "rpdb": bool(existing_config.posterdb_api_key),
+        }
+        existing_view = SimpleNamespace(**existing_config.model_dump(exclude=SECRET_CONFIG_FIELDS))
+    else:
+        stored = {
+            "openai": bool(settings.OPENAI_API_KEY),
+            "tmdb": bool(settings.TMDB_READ_ACCESS_TOKEN),
+            "rpdb": False,
+        }
+        existing_view = None
 
     return templates.TemplateResponse(
+        request,
         "configure.html",
         {
-            "request": request,
-            "existing_config": existing_config,
-            "settings": settings,
+            "existing_config": existing_view,
+            "existing_config_token": config if existing_config else "",
+            "stored": stored,
+            "settings": public_settings(),
             "LLMProvider": LLMProvider,
             "Languages": Languages,
             "CATALOG_PROMPTS": _catalog_prompts_serializable(),
@@ -121,47 +177,90 @@ async def preview_page(request: Request, config: str):
             "series": f"{base_url}/series/manifest.json",
         }
         return templates.TemplateResponse(
+            request,
             "preview.html",
             {
-                "request": request,
                 "manifest_url": manifest_urls["combined"],  # Keep backward compatibility
                 "manifest_urls": manifest_urls,
-                "config": config_obj,
-                "settings": settings,
+                "config": SimpleNamespace(**config_obj.model_dump(exclude=SECRET_CONFIG_FIELDS)),
+                "settings": public_settings(),
             },
         )
     except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error in preview: {e}")
+        logger.error(f"JSON decode error in preview: {describe_error(e)}")
         raise HTTPException(status_code=400, detail="Invalid config format")
     except ValidationError as e:
-        logger.error(f"Validation error in preview: {e}")
+        logger.error(f"Validation error in preview: {describe_error(e)}")
         raise HTTPException(status_code=400, detail="Invalid config data")
     except Exception as e:
-        logger.error(f"General error in preview: {e}")
-        raise HTTPException(status_code=400, detail=f"Config error: {str(e)}")
+        logger.error(f"General error in preview: {describe_error(e)}")
+        raise HTTPException(status_code=400, detail="Invalid config")
 
 
 @router.post("/save-config")
 async def save_config(
     request: Request,
-    openai_api_key: str = Form(...),
+    openai_api_key: str = Form(""),
     openai_base_url: str = Form(settings.OPENAI_BASE_URL),
     model_name: str = Form(settings.DEFAULT_MODEL),
     language: str = Form(settings.PREFERRED_USER_SEARCH_LANGUAGE),
-    tmdb_read_access_token: str = Form(...),
+    tmdb_read_access_token: str = Form(""),
     max_results: int = Form(20),
     use_posterdb: Optional[str] = Form(None),
     posterdb_api_key: str = Form(""),
     include_catalogs_movies: Optional[list[str]] = Form(None),
     include_catalogs_series: Optional[list[str]] = Form(None),
     changed_catalogs: Optional[str] = Form("false"),
+    existing_config: Optional[str] = Form(None),
 ):
     """
     Save configuration settings and return manifest URL.
 
     Handles form submission from the configure page, validates the settings,
     and returns URLs for the manifest and preview page.
+
+    Credential fields may be left blank to keep a stored value: the one inside the config
+    being edited (``existing_config``), otherwise the server's environment value. A stored
+    LLM key is only reused with the base URL it was stored for, because this endpoint sends
+    the key to whatever base URL the form names. The server's RPDB key is never used as a
+    fallback: RPDB poster URLs contain the key and are visible to every client.
     """
+    previous: Optional[Config] = None
+    if existing_config:
+        try:
+            previous = Config.model_validate(json.loads(encryption_service.decrypt(existing_config)))
+        except Exception:
+            return JSONResponse({"success": False, "detail": "Invalid existing configuration"}, status_code=400)
+
+    openai_api_key = openai_api_key.strip()
+    tmdb_read_access_token = tmdb_read_access_token.strip()
+    posterdb_api_key = posterdb_api_key.strip()
+
+    if not openai_api_key:
+        if previous:
+            stored_key, stored_url = previous.openai_api_key, previous.openai_base_url
+        else:
+            stored_key, stored_url = settings.OPENAI_API_KEY, settings.OPENAI_BASE_URL
+        if stored_key and _same_base_url(openai_base_url, stored_url):
+            openai_api_key = stored_key
+        else:
+            detail = (
+                "API key required: a stored key is only reused with the provider URL it was saved for"
+                if stored_key
+                else "API key required"
+            )
+            return JSONResponse({"success": False, "detail": detail}, status_code=400)
+
+    if not tmdb_read_access_token:
+        tmdb_read_access_token = (
+            previous.tmdb_read_access_token if previous else (settings.TMDB_READ_ACCESS_TOKEN or "")
+        )
+
+    if not posterdb_api_key and previous and previous.posterdb_api_key:
+        posterdb_api_key = previous.posterdb_api_key
+
+    secrets = [openai_api_key, tmdb_read_access_token, posterdb_api_key]
+
     try:
         # Handle checkboxes: if not present in form data, it means False
         use_posterdb_bool = use_posterdb == "on" if use_posterdb else False
@@ -189,7 +288,7 @@ async def save_config(
         validation_errors = await validation_service.validate_config(config)
 
         if validation_errors:
-            error_message = validation_service.format_validation_errors(validation_errors)
+            error_message = _scrub(validation_service.format_validation_errors(validation_errors), secrets)
             return JSONResponse({"success": False, "detail": error_message}, status_code=400)
 
         encrypted_config = encryption_service.encrypt(config.model_dump_json())
@@ -214,14 +313,16 @@ async def save_config(
         error_messages = []
         for error in e.errors():
             field = error["loc"][-1] if error["loc"] else "unknown"
-            message = error["msg"]
+            message = _scrub(str(error["msg"]), secrets)
             error_messages.append(f"{field}: {message}")
 
         return JSONResponse(
             {"success": False, "detail": "Validation failed: " + "; ".join(error_messages)}, status_code=400
         )
     except Exception as e:
-        return JSONResponse({"success": False, "detail": f"Configuration error: {str(e)}"}, status_code=500)
+        return JSONResponse(
+            {"success": False, "detail": _scrub(f"Configuration error: {str(e)}", secrets)}, status_code=500
+        )
 
 
 @router.get("/config/{config}/{content_type}/configure")

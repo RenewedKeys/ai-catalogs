@@ -1,8 +1,8 @@
-FROM python:3.13.7-alpine
+FROM python:3.13-alpine
 
 WORKDIR /app
 
-# Install system dependencies for Alpine
+# Build dependencies for packages without musl wheels
 RUN apk add --no-cache \
     gcc \
     musl-dev \
@@ -16,19 +16,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Add entrypoint script and make it executable
-RUN chmod +x /app/entrypoint.sh
-
-# Create non-root user (Alpine style)
-RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app
+# Non-root user; /data holds durable state (a named volume in docker-compose.yml)
+RUN chmod +x /app/entrypoint.sh \
+    && adduser -D -u 1000 appuser \
+    && mkdir -p /data \
+    && chown -R appuser:appuser /app /data
 USER appuser
 
-# Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/', timeout=10)"
+# Web health check. The worker service overrides it in docker-compose.yml.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import os, httpx; httpx.get('http://localhost:' + os.environ.get('PORT', '8000') + '/healthz', timeout=5).raise_for_status()"
 
-# Use entrypoint script for dynamic worker configuration
+# With no arguments the entrypoint starts the web server; with arguments it runs them.
 ENTRYPOINT ["/app/entrypoint.sh"]

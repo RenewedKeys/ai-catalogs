@@ -107,11 +107,13 @@ class TestStremioRouter:
         assert response.status_code == 400
         assert "detail" in response.json()
 
-    def test_get_movie_catalog_route(
-        self,
-        client_with_cfg,
-    ):
+    def test_get_movie_catalog_route(self, client_with_cfg, monkeypatch):
         """Test the movie-specific catalog route."""
+
+        async def fake_catalog(*args, **kwargs):
+            return {"metas": []}
+
+        monkeypatch.setattr("app.api.stremio._cached_catalog", fake_catalog)
         # Use a valid catalog ID from CATALOG_PROMPTS
         response = client_with_cfg.get("/config/encrypted_config/catalog/movie/trending_movie.json")
 
@@ -119,11 +121,13 @@ class TestStremioRouter:
         data = response.json()
         assert "metas" in data
 
-    def test_get_series_catalog_route(
-        self,
-        client_with_cfg,
-    ):
+    def test_get_series_catalog_route(self, client_with_cfg, monkeypatch):
         """Test the series-specific catalog route."""
+
+        async def fake_catalog(*args, **kwargs):
+            return {"metas": []}
+
+        monkeypatch.setattr("app.api.stremio._cached_catalog", fake_catalog)
         # Use a valid catalog ID from CATALOG_PROMPTS
         response = client_with_cfg.get("/config/encrypted_config/catalog/series/trending_series.json")
 

@@ -3,6 +3,8 @@ RatingPosterDB service for the Stremio AI Companion application.
 """
 
 import logging
+
+from app.core.logging import describe_error
 from typing import Optional
 
 
@@ -53,5 +55,5 @@ class RPDBService:
             return poster_url
 
         except Exception as e:
-            self.logger.error(f"RPDB error for IMDB ID {imdb_id}: {e}")
+            self.logger.error(f"RPDB error for IMDB ID {imdb_id}: {describe_error(e)}")
             return None
