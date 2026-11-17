@@ -3,6 +3,8 @@ TMDB service for the Stremio AI Companion application.
 """
 
 import logging
+
+from app.core.logging import describe_error
 from typing import Any, Optional
 
 import httpx
@@ -133,7 +135,7 @@ class TMDBService:
                 self.logger.error(f"TMDB HTTP error {e.response.status_code} for endpoint: {endpoint}")
                 return None
             except Exception as e:
-                self.logger.error(f"TMDB request error for {endpoint}: {e}")
+                self.logger.error(f"TMDB request error for {endpoint}: {describe_error(e)}")
                 return None
 
     async def search_movie(

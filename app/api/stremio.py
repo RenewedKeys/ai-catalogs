@@ -12,7 +12,7 @@ from slugify import slugify
 
 from app.api.deps import get_config, rpdb_response
 from app.core.config import settings
-from app.core.logging import logger
+from app.core.logging import describe_error, logger
 from app.models.config import Config
 from app.models.enums import ContentType
 from app.models.movie import MovieSuggestion, TVSeriesSuggestion, StremioResponse
@@ -93,7 +93,7 @@ async def _process_metadata_pipeline(
         return metas
 
     except Exception as e:
-        logger.error(f"Metadata pipeline failed: {e}")
+        logger.error(f"Metadata pipeline failed: {describe_error(e)}")
         return []
 
 
@@ -351,7 +351,7 @@ async def _process_catalog_request_internal(
 
     except Exception as e:
         # The detail stays generic: provider error messages can quote the API key.
-        logger.error(f"Catalog request failed: {type(e).__name__}")
+        logger.error(f"Catalog request failed: {describe_error(e)}")
         raise HTTPException(status_code=500, detail="Catalog request failed")
 
 

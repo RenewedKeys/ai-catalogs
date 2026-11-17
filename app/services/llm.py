@@ -4,6 +4,8 @@ LLM service for the Stremio AI Companion application.
 
 import json
 import logging
+
+from app.core.logging import describe_error
 from datetime import datetime
 from typing import List, Type, Tuple, Iterable, Union, cast
 
@@ -283,19 +285,22 @@ Provide structured data with separate title and year fields for each recommendat
                 suggestions = await self._try_structured_completion(messages, response_model, field_name, max_results)
                 return suggestions
         except (openai.BadRequestError, AttributeError, StructuredOutputNotSupported) as e:
-            self.logger.warning(f"[{self.model}]Structured Output (.parse) failed: {e}. Attempting fallback.")
+            self.logger.warning(
+                f"[{self.model}]Structured Output (.parse) failed: {describe_error(e)}. Attempting fallback."
+            )
             try:
                 suggestions = await self._try_fallback_completion(messages, response_model, field_name, max_results)
                 return suggestions
             except Exception as fallback_e:
                 self.logger.error(
-                    f"[{self.model}]Fallback completion also failed for query '{query}': {fallback_e}. "
+                    f"[{self.model}]Fallback completion also failed for query '{query}': {describe_error(fallback_e)}. "
                     f"Returning empty results."
                 )
                 return []
         except Exception as e:
             self.logger.error(
-                f"[{self.model}]Unexpected LLM service error for query '{query}': {e}. " f"Returning empty results."
+                f"[{self.model}]Unexpected LLM service error for query '{query}': {describe_error(e)}. "
+                f"Returning empty results."
             )
             return []
 

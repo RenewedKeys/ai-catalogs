@@ -6,11 +6,11 @@
 
 x-app: &app
   build: .
-  image: ai-catalogs:local
+  image: ${IMAGE:-ai-catalogs:local}
   restart: unless-stopped
   stop_grace_period: 30s
   env_file:
-    - path: .env
+    - path: ${ENV_FILE:-.env}
       required: false
   volumes:
     - data:/data

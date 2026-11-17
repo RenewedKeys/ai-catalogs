@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from starlette.templating import Jinja2Templates
 
 from app.core.config import settings
-from app.core.logging import logger
+from app.core.logging import describe_error, logger
 from app.models.config import Config
 from app.models.enums import LLMProvider, Languages
 from app.services import CATALOG_PROMPTS
@@ -123,7 +123,7 @@ async def configure_page(request: Request, config: Optional[str] = Query(None), 
         except HTTPException:
             raise
         except Exception as e:
-            logger.warning(f"Invalid config provided to configure page: {e}")
+            logger.warning(f"Invalid config provided to configure page: {describe_error(e)}")
             raise HTTPException(status_code=400, detail="Invalid config data")
 
     # Credentials are never rendered, neither the server's nor the ones inside an existing
@@ -187,13 +187,13 @@ async def preview_page(request: Request, config: str):
             },
         )
     except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error in preview: {e}")
+        logger.error(f"JSON decode error in preview: {describe_error(e)}")
         raise HTTPException(status_code=400, detail="Invalid config format")
     except ValidationError as e:
-        logger.error(f"Validation error in preview: {e}")
+        logger.error(f"Validation error in preview: {describe_error(e)}")
         raise HTTPException(status_code=400, detail="Invalid config data")
     except Exception as e:
-        logger.error(f"General error in preview: {type(e).__name__}")
+        logger.error(f"General error in preview: {describe_error(e)}")
         raise HTTPException(status_code=400, detail="Invalid config")
 
 

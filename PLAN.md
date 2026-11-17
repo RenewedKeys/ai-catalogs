@@ -1,6 +1,7 @@
 # Plan: Curated daily AI catalogs on a fork of stremio-ai-companion
 
-Revision 3 (after Codex review rounds 1-2).
+Revision 4 (after Codex review rounds 1-3 of the plan, and a review of the milestone 1
+implementation). Milestone 1 is implemented; see section 16 for its status.
 
 ## 0. Goal and fixed decisions
 
@@ -104,9 +105,18 @@ and RPDB URLs would leak the key).
 - Durable state (snapshots, history, runs, jobs, budget ledger) in SQLite. Deviation from
   the spec's "Redis list/set": this data must survive restarts with no TTL and needs
   transactions. Redis is not needed by curated catalogs at all.
-- Catalog definitions live in `catalogs.d/*.yaml` (mounted read-only into both services),
-  loaded and validated with Pydantic at start and on SIGHUP / file-mtime change. Each
-  loaded definition gets a `config_rev` (sha256 of the canonical YAML).
+- Catalog definitions are authored in `catalogs.d/*.yaml` (mounted read-only into both
+  services) but **SQLite holds the authoritative copy**. A filesystem edit and a database
+  commit cannot be made atomic, so a definition only takes effect when it is *accepted*:
+  one loader (the worker, at start and on SIGHUP / file-mtime change; or the CLI `apply`
+  command) validates the YAML with Pydantic and, in one transaction, writes it to
+  `catalog_defs` with its `config_rev` (sha256 of the canonical YAML). Invalid YAML is
+  rejected, the accepted definition stays in force, and the error is recorded for the
+  status page. A removed file marks the catalog `removed`. Web workers, the pipeline and
+  the commit check all read `catalog_defs`, never the files, so "current revision" has one
+  meaning and is checked transactionally. (This is also the storage the milestone 8 editor
+  writes to.) Tests: a worker with stale in-memory state, file deletion, invalid
+  replacement YAML, and a revision accepted immediately before a commit.
 - Web workers never call the LLM for curated catalogs.
 - **Legacy surface is off by default.** `ENABLE_LEGACY=false` means the upstream routers
   (`/configure`, `/save-config`, `/config/{blob}/...`, preview, AI search, feed catalogs)
@@ -120,13 +130,29 @@ and RPDB URLs would leak the key).
 
 ## 4. Data model (SQLite, `app/store/`, migrations via numbered SQL files + `schema_version`)
 
+- `catalog_defs(catalog_id PRIMARY KEY, config_rev, definition_json, state, accepted_at,
+  last_error, epoch)`; state `enabled | disabled | removed`. `epoch` is bumped by every
+  maintenance operation (rollback, history clear) and by every accepted revision.
 - `snapshots(id, catalog_id, created_at, run_id, config_rev, status, metas_json, item_count)`
-  with a partial unique index `UNIQUE(catalog_id) WHERE status='active'`. Keep last 10.
-- `history(catalog_id, tmdb_id, imdb_id, title, year, snapshot_id, served_at)`; one row
-  per item per activated snapshot.
-- `runs(id, catalog_id, config_rev, trigger, dry_run, started_at, finished_at, status,
-  stage_counts_json, reject_reasons_json, prompt_hash, model_calls, tokens_in, tokens_out,
-  relaxed_window, repeats, error)`. Status: `ok | failed | superseded | abandoned`.
+  with a partial unique index `UNIQUE(catalog_id) WHERE status='active'`. Payload retention:
+  keep the last 10 per catalog. Pruning a snapshot never touches history.
+- `activations(id INTEGER PRIMARY KEY AUTOINCREMENT, catalog_id, snapshot_id, run_id,
+  activated_at, revoked_at)`; one row each time a run publishes. `id` order is the
+  activation order ("last N runs" means the last N non-revoked activations), independent
+  of any snapshot's `created_at`.
+- `history(activation_id, catalog_id, tmdb_id, imdb_id, title, year)`; one row per item per
+  activation, referencing `activations` (not `snapshots`), with no cascade from snapshot
+  pruning. History retention is separate: keep the rows of the last
+  `max(history_window_runs, 30)` activations per catalog, so a 14-run window (or a later
+  increase) is always backed by data even though only 10 payloads are kept.
+- `runs(id, job_id, catalog_id, config_rev, epoch, seed, trigger, dry_run, started_at,
+  finished_at, status, stage_counts_json, reject_reasons_json, prompt_hash, model_calls,
+  tokens_in, tokens_out, relaxed_window, repeats, error_category)`. Status:
+  `ok | failed | superseded | abandoned`. `job_id` ties a run to the exact job attempt, so
+  recovery marks the right run. `error_category` is a controlled value (e.g.
+  `provider_auth`, `provider_rate_limit`, `provider_http_5xx`, `timeout`, `shortfall`,
+  `budget`, `config`) plus an HTTP status; provider message text is never stored or logged
+  (it can quote keys), so the status page and backups cannot disclose it.
 - `jobs(id, catalog_id, kind, state, requested_at, not_before, attempt, claimed_by,
   claim_gen, heartbeat_at)` with partial unique index
   `UNIQUE(catalog_id) WHERE state IN ('pending','running')`.
@@ -157,9 +183,10 @@ Transactions and recovery:
   set back to `pending` with `attempt+1` and backoff (`not_before`), or `failed` after 3
   attempts; its run row becomes `abandoned`. This frees the one-open-job index.
 - **Commit (single `BEGIN IMMEDIATE` transaction):** verify `lease.generation` equals
-  the worker's remembered generation and the lease is unexpired; verify the catalog still
-  exists, is enabled, and its current `config_rev` equals the run's; then mark old
-  snapshot `superseded`, insert new `active`, insert history rows, prune, set job `done`.
+  the worker's remembered generation and the lease is unexpired; verify in `catalog_defs`
+  that the catalog is `enabled` and its `config_rev` **and `epoch`** equal the run's; then
+  mark old snapshot `superseded`, insert new `active`, insert the `activations` row and its
+  history rows, prune (payloads and history by their separate rules), set job `done`.
 - **Every terminal outcome finalizes its job, in one transaction, fenced.** All
   job-state writes use `... WHERE id=? AND claim_gen=? AND state='running'` and are
   preceded by the lease-generation check, so a worker that lost ownership cannot touch a
@@ -175,9 +202,21 @@ Transactions and recovery:
     without waiting for abandoned-job recovery.
   - SIGTERM / cancelled: job back to `pending` (no attempt penalty), run `abandoned`.
   - lost lease: no writes; the new owner's abandoned-job recovery handles the job.
-- **Rollback (v2 UI, v1 CLI):** re-activates an older snapshot in one transaction and
-  deletes the history rows of the snapshots it supersedes, so rolled-back titles become
-  eligible again.
+- **Maintenance operations (rollback, history clear; v1 CLI, v2 UI)** each run in one
+  `BEGIN IMMEDIATE` transaction and bump the catalog's `epoch`. An in-flight refresh
+  started under the old epoch therefore fails its commit check and ends `superseded` with
+  one replacement job queued, so a rollback cannot be overwritten by a list that was
+  selected against the pre-rollback history. They do not need the worker lease.
+  - Rollback to snapshot S (must still have its payload): S becomes `active`; every
+    activation after S's own activation gets `revoked_at` (their titles become eligible
+    again; rows are kept for audit); no new activation row is written, so S's original
+    activation keeps its place in the window. Intervening activations are thus excluded
+    from "last N".
+  - History clear: sets `revoked_at` on all of the catalog's activations.
+  Tests: a 14-run window after more than 14 (and more than 10) publications; the window
+  after a rollback; rollback during an in-flight run.
+- **Run admission:** `max_runs_per_day` and the one-open-job rule are checked in the same
+  transaction that inserts the job, so CLI, webhook and scheduler cannot race past them.
 - Retry times live in `jobs.not_before`, so they survive restarts.
 - Tests kill the process (subprocess + SIGKILL) between claim and commit, and inside the
   commit transaction, and assert the next start recovers with the previous snapshot intact.
@@ -205,7 +244,7 @@ The pipeline keeps one candidate pool for the run; every stage is idempotent ove
 7. **Gatekeeper** (section 8): hard thresholds, hard blacklist by `tmdb_id`, franchise
    denylist. Every rejection recorded with a reason.
 8. **History filter** on `tmdb_id` / `imdb_id` against the last `history_window_runs`
-   activated snapshots (authoritative).
+   non-revoked activations (authoritative).
 9. **Select** (deterministic given the seed): apply caps and quotas to the eligible pool —
    max 1 per `belongs_to_collection.id` (films with no collection are independent),
    optional max 2 per director, optional per-category minimums and per-decade minimums
@@ -408,14 +447,22 @@ startup fails without it when the editor is enabled), signed HttpOnly SameSite=S
 cookies, `Secure` when `PUBLIC_BASE_URL` is https, 12h expiry, CSRF token on every POST,
 login rate limit.
 
-CORS, structurally: the global `CORSMiddleware` is removed from the app. The curated
-Stremio router and (when enabled) the legacy Stremio router are mounted as a sub-app that
-has `CORSMiddleware(allow_origins=["*"], allow_credentials=False, allow_methods=["GET"])`;
-`/ops` (and later `/admin`) are a separate sub-app with no CORS middleware. Test: an
-`Origin`-bearing request to `/ops/*` gets no `Access-Control-Allow-Origin`.
+CORS, structurally (built in milestone 1): the parent app has no CORS middleware. The
+Stremio routes live in a sub-app with
+`CORSMiddleware(allow_origins=["*"], allow_credentials=False, allow_methods=["GET"])`
+that is mounted **last, at the empty prefix**, so it is a catch-all: anything registered
+on the parent after `create_app()` returns is shadowed and answered by it (404 with a
+CORS header). Therefore `/ops` (and later `/admin`) are each a dedicated sub-app with no
+CORS middleware, mounted at their prefix **inside `create_app()` before the catch-all**,
+so their unknown paths and OPTIONS requests also stay outside Stremio CORS. Tests per
+sub-app: an authorised request, an unauthorised one, a missing path and a preflight, each
+with an `Origin` header and none returning `Access-Control-Allow-Origin`.
 
 Secrets and tokens:
 - `OPENAI_API_KEY`, `TMDB_API_KEY` only from env; never in SQLite, YAML, responses or logs.
+  Errors from providers and HTTP clients are logged and stored as type + status only
+  (`describe_error`, `runs.error_category`); the sentinel tests capture logs as well as
+  responses during forced provider failures.
 - `ADDON_ACCESS_TOKEN` in `/c/{token}/` is a bearer credential that only grants read
   access to a movie list; it is optional (unset -> path segment `public`). It will appear
   in AIOMetadata's stored config and possibly its logs — stated in the README. On our
@@ -499,12 +546,21 @@ Secrets and tokens:
    `upstream` remote, push `main` to `origin`; it is not a GitHub fork object, so the MIT
    LICENSE and a fork notice in the README carry the attribution); deps, rename, `ENABLE_LEGACY=false`, secret-rendering fix,
    sentinel test, CORS restructuring, compose with web/worker/volume.
-2. Store + curated routes + manifest fed by a fixture snapshot; AIOMetadata integration
-   matrix (the riskiest external dependency, tested first).
+2. Store (schema incl. `catalog_defs`, `activations`, history retention; lease, fenced
+   job claim and fenced commit primitives with their tests) + curated routes + manifest
+   fed by a fixture snapshot; AIOMetadata integration matrix (the riskiest external
+   dependency, tested first).
 3. TMDB resolver + gatekeeper + blacklist/franchise resolver script.
 4. Curated LLM layer + budget ledger + prompt templating + `probe_model.py`.
-5. Pipeline + history + CLI (`run`, `--dry-run`).
-6. Worker: lease, jobs, schedule, recovery; ops webhook + status; backup.
+5. Pipeline + history + definition loader (`apply`, `validate`) + the **shared leased job
+   runner**: the one code path that admits a job, takes the lease, runs the pipeline and
+   commits. CLI `run` / `--dry-run` enqueue a job and execute it through that runner (taking
+   the lease if no worker holds it, otherwise leaving it to the worker); nothing publishes
+   outside it. CLI `rollback` / `history clear` as maintenance operations (section 4).
+6. Worker process around the runner: schedule, catch-up, heartbeat task, abandoned-job
+   recovery; `/ops` sub-app (webhook + status); backup; the worker's real health check
+   replaces the placeholder and the compose smoke test also asserts lease ownership and
+   release.
 7. Seed catalog tuning over a week of real runs; rerun the integration matrix.
 8. (v2) Browser editor, dry-run UI, rollback UI.
 
@@ -518,3 +574,26 @@ Secrets and tokens:
   would need another data source.
 - Review the generated franchise denylist ids once.
 - Default model, chosen after the probe script.
+
+## 16. Milestone 1 status
+
+Implemented on branch `milestone-1-fork-hygiene` (see README and the commit messages).
+Deviations from sections 3 and 12, all kept:
+
+- Blank credential fields keep the stored value, but a stored LLM key is only reused with
+  the base URL it was stored for (`/save-config` sends the key to the URL in the form), and
+  the env `RPDB_API_KEY` is never a fallback (RPDB poster URLs embed the key).
+- Legacy error responses and logs carry no provider text.
+- Legacy manifest artwork is only emitted when `PUBLIC_BASE_URL` is set.
+- The compose smoke test runs under its own project name, image tag and empty env file, so
+  it cannot touch a real deployment's containers, volume or credentials.
+- Removed: CODEOWNERS, the CD workflow, dependency-review, the CodeQL and Trivy jobs, the
+  Codecov upload, the multi-arch build job, two stray root-level scripts.
+
+Gates before milestone 1 counts as complete (none can be met on the development machine,
+which has no Docker):
+
+1. Seed push of upstream `main` to `RenewedKeys/ai-catalogs`, then the branch.
+2. A green CI run, including `scripts/compose_smoke.sh` (image build, both services, clean stop).
+3. The configure flow exercised once in a browser with `ENABLE_LEGACY=true`: fresh save
+   with blank keys, edit with blank keys, provider change requiring a key.

@@ -3,7 +3,7 @@ from typing import Callable, Awaitable, Any
 
 from fastapi import Path, HTTPException
 
-from app.core.logging import logger
+from app.core.logging import describe_error, logger
 from app.models.config import Config
 from app.models.movie import StremioResponse
 from app.services.encryption import encryption_service
@@ -23,7 +23,7 @@ def get_config(config: str = Path(...)) -> Config:
         try:
             return Config.model_validate_json(config)
         except Exception as e2:
-            logger.error(f"Config decrypt/parse failed: {e2}")
+            logger.error(f"Config decrypt/parse failed: {describe_error(e2)}")
             raise HTTPException(status_code=400, detail="Invalid config data")
 
 

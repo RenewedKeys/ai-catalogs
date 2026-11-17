@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import HTTPException
 
 from app.core.config import settings
-from app.core.logging import logger
+from app.core.logging import describe_error, logger
 
 
 class EncryptionService:
@@ -90,7 +90,7 @@ class EncryptionService:
             f = Fernet(key)
             return f.decrypt(encrypted).decode()
         except Exception as e:
-            logger.error(f"Failed to decrypt config data: {e}")
+            logger.error(f"Failed to decrypt config data: {describe_error(e)}")
             raise HTTPException(status_code=400, detail="Invalid config data")
 
 

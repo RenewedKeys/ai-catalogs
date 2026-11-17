@@ -279,3 +279,42 @@ def test_catalog_errors_do_not_echo_the_provider_message(secrets, monkeypatch):
     response = client.get(f"/config/{_user_blob()}/catalog/movie/trending_movie.json")
     assert response.status_code == 500
     _assert_clean(response, secrets, "catalog error")
+
+
+async def test_llm_failures_do_not_log_the_provider_message(secrets, sample_config, caplog):
+    """The legacy LLM service swallows provider errors; what it logs must not quote them."""
+    from app.services.llm import LLMService
+
+    secret = USER_SECRETS["openai_api_key"]
+    service = LLMService(sample_config)
+    service._structured_output_supported = lambda: True
+    service._try_fallback_completion = AsyncMock(side_effect=RuntimeError(f"Incorrect API key provided: {secret}"))
+
+    for first_error in (RuntimeError(f"bad key {secret}"), AttributeError(f"bad key {secret}")):
+        service._try_structured_completion = AsyncMock(side_effect=first_error)
+        with caplog.at_level("DEBUG"):
+            assert await service.generate_movie_suggestions("heist films", 5) == []
+
+    assert caplog.records, "expected the failures to be logged"
+    assert secret not in caplog.text
+
+
+def test_invalid_config_is_not_logged_verbatim(secrets, caplog):
+    """A decryptable config that fails validation must not have its values logged."""
+    secret = USER_SECRETS["openai_api_key"]
+    blob = encryption_service.encrypt(json.dumps({"openai_api_key": secret, "language": secret}))
+    client = TestClient(create_app(enable_legacy=True))
+    with caplog.at_level("DEBUG"):
+        for path in (f"/configure?config={blob}", f"/config/{blob}/preview", f"/config/{blob}/manifest.json"):
+            assert client.get(path).status_code == 400
+    assert caplog.records
+    assert secret not in caplog.text
+
+
+def test_routes_added_after_create_app_would_be_shadowed():
+    """
+    Guard for later milestones: the Stremio sub-app is a catch-all mounted last, so /ops and
+    /admin must be registered inside create_app() before it, never added to the app afterwards.
+    """
+    app = create_app(enable_legacy=False)
+    assert app.routes[-1].path == "" and app.routes[-1].app is app.state.stremio_app

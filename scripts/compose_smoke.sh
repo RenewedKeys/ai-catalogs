@@ -4,39 +4,53 @@
 #   web     PID 1 is uvicorn and /healthz answers 200
 #   worker  PID 1 is the worker module and it publishes no port
 #   stop    both stop within the grace period (worker exits 0; web exits 0 or 143)
+#
+# Isolated from any real deployment in this directory: it runs under its own Compose
+# project name (so `down -v` only removes this run's containers and volume), builds its own
+# image tag, and loads an empty env file instead of .env, so no real credentials are used.
 set -eu
 
-cleanup() { docker compose down -v --remove-orphans >/dev/null 2>&1 || true; }
+PROJECT="ai-catalogs-smoke-$$"
+EMPTY_ENV=$(mktemp)
+export ENV_FILE="$EMPTY_ENV"
+export IMAGE="ai-catalogs:smoke"
+export PORT="${SMOKE_PORT:-18000}"
+
+dc() { docker compose -p "$PROJECT" --env-file "$EMPTY_ENV" "$@"; }
+
+cleanup() {
+    dc down -v --remove-orphans >/dev/null 2>&1 || true
+    rm -f "$EMPTY_ENV"
+}
 trap cleanup EXIT
 
-export PORT="${PORT:-18000}"
-docker compose up -d --build
+dc up -d --build
 
 i=0
 until curl -fsS "http://localhost:$PORT/healthz" >/dev/null 2>&1; do
     i=$((i + 1))
     if [ "$i" -gt 30 ]; then
         echo "web did not become healthy" >&2
-        docker compose logs >&2
+        dc logs >&2
         exit 1
     fi
     sleep 1
 done
 echo "ok: /healthz"
 
-web_cmd=$(docker compose exec -T web cat /proc/1/cmdline | tr '\0' ' ')
+web_cmd=$(dc exec -T web cat /proc/1/cmdline | tr '\0' ' ')
 case "$web_cmd" in
     *uvicorn*) echo "ok: web PID 1 is uvicorn" ;;
     *) echo "web PID 1 is: $web_cmd" >&2; exit 1 ;;
 esac
 
-worker_cmd=$(docker compose exec -T worker cat /proc/1/cmdline | tr '\0' ' ')
+worker_cmd=$(dc exec -T worker cat /proc/1/cmdline | tr '\0' ' ')
 case "$worker_cmd" in
     *app.worker*) echo "ok: worker PID 1 is app.worker" ;;
     *) echo "worker PID 1 is: $worker_cmd" >&2; exit 1 ;;
 esac
 
-if [ -n "$(docker compose port worker 8000 2>/dev/null || true)" ]; then
+if [ -n "$(dc port worker 8000 2>/dev/null || true)" ]; then
     echo "worker publishes a port" >&2
     exit 1
 fi
@@ -47,11 +61,11 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/configure"
 echo "ok: legacy routes are not mounted"
 
 start=$(date +%s)
-docker compose stop
+dc stop
 elapsed=$(( $(date +%s) - start ))
 [ "$elapsed" -le 30 ] || { echo "stop took ${elapsed}s" >&2; exit 1; }
 
-exit_code() { docker inspect -f '{{.State.ExitCode}}' "$(docker compose ps -a -q "$1")"; }
+exit_code() { docker inspect -f '{{.State.ExitCode}}' "$(dc ps -a -q "$1")"; }
 
 code=$(exit_code worker)
 [ "$code" = "0" ] || { echo "worker exited with $code" >&2; exit 1; }

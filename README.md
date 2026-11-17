@@ -32,7 +32,8 @@ The web service listens on port 8000 (`PORT` in `.env` changes the published por
 ## Configuration
 
 All settings are environment variables; [.env.example](.env.example) lists them. API keys are
-read from the environment only and are never shown on a page or written to a log. One caveat
+read from the environment only and are never shown on a page. Error logs record the type of
+a failure and its HTTP status, not the provider's message, which can quote a key. One caveat
 applies with `ENABLE_LEGACY=true`: an addon URL generated there carries the keys in encrypted
 form, so whoever holds that URL can spend them through this server.
 
