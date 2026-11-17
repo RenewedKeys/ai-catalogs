@@ -4,12 +4,36 @@
 #   (no arguments) or "web"   start the web server (uvicorn)
 #   anything else             exec it as given, e.g. `python -m app.worker`
 #
+# Both run as PUID:PGID (see below).
+#
 # Every branch uses exec, so the service is PID 1 and receives SIGTERM directly.
 
 set -e
 
+# Run as PUID:PGID (default 1000:1000), like linuxserver images. Started as root (the default),
+# first make sure the data directories exist and belong to that user, so a bind mount Docker
+# created as root just works. Started as another user (compose `user:`), run as that user.
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
+case "$PUID$PGID" in
+    *[!0-9]*) echo "PUID and PGID must be numbers (got PUID=$PUID PGID=$PGID)" >&2; exit 2 ;;
+esac
+export PUID PGID
+
+RUN_AS=""
+if [ "$(id -u)" = "0" ]; then
+    DB_DIR=$(dirname "${DATABASE_PATH:-/data/ai-catalogs.sqlite}")
+    for dir in /data "$DB_DIR" "${BACKUP_DIR:-/data/backups}"; do
+        mkdir -p "$dir"
+        find "$dir" \( ! -user "$PUID" -o ! -group "$PGID" \) -exec chown -h "$PUID:$PGID" {} +
+    done
+    if [ "$PUID" != "0" ]; then
+        RUN_AS="su-exec $PUID:$PGID"
+    fi
+fi
+
 if [ "$#" -gt 0 ] && [ "$1" != "web" ]; then
-    exec "$@"
+    exec $RUN_AS "$@"
 fi
 
 # Number of uvicorn workers: UVICORN_WORKERS, or one per CPU core (1..8) when unset or 0.
@@ -28,4 +52,4 @@ fi
 
 # --no-access-log: request paths can carry the addon access token. The app logs requests
 # itself with those path segments masked.
-exec uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers "$UVICORN_WORKERS" --no-access-log
+exec $RUN_AS uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers "$UVICORN_WORKERS" --no-access-log

@@ -41,6 +41,7 @@ from typing import Callable, Optional
 
 from app.core.config import settings
 from app.core.logging import describe_error
+from app.core.privileges import drop_root
 from app.curation.definitions import LoaderError, apply_dir
 from app.curation.runner import RunReport, Runner, Services, default_owner
 from app.curation.schedule import catch_up, enqueue_due, sync_schedules
@@ -309,6 +310,7 @@ class Worker:
 
 
 def main() -> None:
+    drop_root()
     sys.exit(asyncio.run(Worker().run()))
 
 

@@ -205,6 +205,7 @@ form, so whoever holds that URL can spend them through this server.
 | `ENABLE_EDITOR`, `EDITOR_AUTH`, `EDITOR_PROXY_USER_HEADER`, `SESSION_SECRET`, `ADMIN_PASSWORD` | The browser editor at `/configure` (off by default; see below) |
 | `BACKUP_DIR`, `BACKUP_KEEP` | Automatic backups; default `/data/backups`, 7 of each kind |
 | `DATABASE_PATH` | SQLite file; default `/data/ai-catalogs.sqlite` on the compose volume, which must be a local disk |
+| `PUID`, `PGID` | User and group the services run as (default `1000`). On start the container gives `/data` to them, so a bind-mounted data folder needs no `chown`; commands run with `docker compose exec` drop to them too |
 | `ENABLE_LEGACY` | `true` mounts the upstream addon routes; needs `ENCRYPTION_KEY`. Trusted networks only |
 
 ## Development

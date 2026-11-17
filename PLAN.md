@@ -954,3 +954,23 @@ Under `/admin/...` the editor's inner pages would have had no proxy login at all
   (and nowhere else), proxy mode starts without secrets, fails closed without the header, has no
   login/logout, custom header name, CSRF + Origin still required, token bound to the user, key
   file private and shared between workers, `SESSION_SECRET` preferred when set.
+
+## 24. PUID / PGID (no manual chown)
+
+Asked by the owner so another person can install the app without fixing permissions, the way
+linuxserver images and the compose template they use work. Before, the image ran as `appuser`
+(1000) and a bind-mounted data folder that Docker created (root-owned) stopped the web service
+at startup ("Cannot open the database") until someone ran `chown`.
+
+- The image starts as root. `entrypoint.sh` creates `/data`, the database's directory and
+  `BACKUP_DIR`, hands anything in them not owned by `PUID:PGID` (default 1000:1000) to that
+  user, then `exec su-exec PUID:PGID ...`, so the service stays PID 1 and gets SIGTERM directly.
+  `PUID=0` runs as root; a container started as another user (compose `user:`) skips the chown
+  and runs as that user. Non-numeric IDs stop the container with a message.
+- `docker exec` bypasses the entrypoint and runs as root, so `python -m app.curation` and
+  `app.worker` call `app.core.privileges.drop_root()` first (setgroups, setgid, setuid). The
+  worker's health check and the README's `docker compose exec worker python -m app.curation ...`
+  commands therefore never leave a root-owned SQLite `-wal`/`-shm` or backup on the volume.
+- Tests: `tests/unit/test_privileges.py`; the Compose smoke test checks both services run as
+  uid 1000, nothing on the volume is root-owned after a CLI run through `docker exec`, and a
+  volume made root-owned is handed back on restart (database still served, lease retaken).

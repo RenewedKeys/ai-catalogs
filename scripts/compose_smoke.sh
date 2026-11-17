@@ -4,6 +4,8 @@
 #   web     PID 1 is uvicorn and /healthz answers 200
 #   worker  PID 1 is the worker module, it publishes no port, it holds the lease and its
 #           health check (status --check) turns healthy
+#   user    both run as uid 1000 (PUID), nothing on the volume is root-owned, and a volume
+#           made root-owned is handed back to 1000 on restart
 #   store   the web workers create the database on the volume (racing on first start), the
 #           curated manifest is empty, a fixture loaded with the CLI is served whole at
 #           offset 0 and empty at skip=100, and it survives a container restart
@@ -115,16 +117,35 @@ check_catalog() {
 check_catalog
 echo "ok: fixture served whole at offset 0, empty at skip=100"
 
+# Services run as PUID:PGID (default 1000), not root; the CLI above ran through `docker exec`
+# as root and dropped to 1000 too, so nothing on the volume is root-owned.
+for svc in web worker; do
+    uid=$(dc exec -T "$svc" awk '/^Uid:/ {print $2}' /proc/1/status)
+    [ "$uid" = "1000" ] || { echo "$svc PID 1 runs as uid $uid" >&2; exit 1; }
+done
+echo "ok: web and worker run as uid 1000"
+root_owned() { dc exec -T web find /data -user 0 | tr '\n' ' '; }
+[ -z "$(root_owned)" ] || { echo "root-owned files on the volume: $(root_owned)" >&2; exit 1; }
 owner=$(dc exec -T web stat -c %U /data/ai-catalogs.sqlite)
 [ "$owner" = "appuser" ] || { echo "database owned by $owner" >&2; exit 1; }
+echo "ok: nothing on the volume is root-owned (CLI via docker exec included)"
 
-dc restart web
+# A data directory owned by root (what Docker makes for a missing bind-mount path) is handed
+# to PUID:PGID by the entrypoint on the next start.
+dc exec -T web chown -R 0:0 /data
+dc restart web worker
 i=0
 until curl -fsS "http://localhost:$PORT/healthz" >/dev/null 2>&1; do
-    i=$((i + 1)); [ "$i" -le 30 ] || { echo "web did not come back" >&2; exit 1; }; sleep 1
+    i=$((i + 1)); [ "$i" -le 30 ] || { echo "web did not come back" >&2; dc logs >&2; exit 1; }; sleep 1
 done
+[ -z "$(root_owned)" ] || { echo "still root-owned after restart: $(root_owned)" >&2; exit 1; }
 check_catalog
-echo "ok: database on the volume, owned by appuser, survives a restart"
+i=0
+until [ "$(dc exec -T worker python -m app.curation status --json | lease_field holder)" = "worker" ]; do
+    i=$((i + 1)); [ "$i" -le 120 ] || { echo "worker did not retake the lease" >&2; dc logs worker >&2; exit 1; }
+    sleep 1
+done
+echo "ok: root-owned volume fixed on start; database survives a restart"
 
 start=$(date +%s)
 dc stop
