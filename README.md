@@ -4,8 +4,9 @@ Self-hosted Stremio catalog addon that serves curated, daily-rotating movie list
 by an LLM and checked against TMDB, meant to be imported into
 [AIOMetadata](https://github.com/cedya77/aiometadata) as a custom manifest.
 
-> **Status: milestone 2 of 8, first part.** The addon serves curated lists from SQLite, but
-> nothing generates them yet: lists are loaded from fixture files. [PLAN.md](PLAN.md) has the
+> **Status: milestone 2 of 8.** The addon serves curated lists from SQLite, and the lease,
+> job and fenced-commit primitives the refresh worker will use are in place, but nothing
+> generates lists yet: they are loaded from fixture files. [PLAN.md](PLAN.md) has the
 > design and the milestones.
 
 ## What works today
