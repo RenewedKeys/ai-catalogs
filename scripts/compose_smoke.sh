@@ -50,8 +50,11 @@ case "$worker_cmd" in
     *) echo "worker PID 1 is: $worker_cmd" >&2; exit 1 ;;
 esac
 
-if [ -n "$(dc port worker 8000 2>/dev/null || true)" ]; then
-    echo "worker publishes a port" >&2
+# `docker port` lists a container's published ports and prints nothing when there are none.
+# (`docker compose port` is no use here: it prints ":0" for an unpublished port.)
+worker_ports=$(docker port "$(dc ps -q worker)")
+if [ -n "$worker_ports" ]; then
+    echo "worker publishes a port: $worker_ports" >&2
     exit 1
 fi
 echo "ok: worker publishes no port"
