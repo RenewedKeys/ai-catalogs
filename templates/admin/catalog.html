@@ -82,7 +82,7 @@
     <tbody>
     {% for s in catalog.snapshots %}
     <tr>
-      <td>{{ s.id }}</td><td>{{ s.created_at }}</td><td>{{ s.items }}</td>
+      <td>{{ s.id }}</td><td>{{ s.created_at }}</td><td>{{ s["items"] }}</td>
       <td>{{ "served now" if s.status == "active" else ("revoked" if s.revoked else ("payload pruned" if not s.has_payload else "earlier")) }}</td>
       <td>{% if s.eligible %}<a class="button secondary small" href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/rollback/{{ s.id }}">Roll back…</a>{% endif %}</td>
     </tr>

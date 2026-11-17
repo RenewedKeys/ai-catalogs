@@ -1,3 +1,3 @@
 """
-Core functionality for the Stremio AI Companion application.
+Settings, logging and process helpers.
 """

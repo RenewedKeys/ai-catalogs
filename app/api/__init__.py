@@ -4,15 +4,13 @@ Application factory.
 Layout:
 
     app (parent)                      no CORS
-      /healthz, /static
-      legacy web UI (/configure ...)  only when ENABLE_LEGACY is true
+      /healthz, /static               logo and background of the addon manifest
       /ops                            sub-app, no CORS, bearer OPS_TOKEN (404 when unset)
       /configure                      sub-app, no CORS, catalog editor (404 unless ENABLE_EDITOR)
       /                               redirects to /configure/ when the editor is on
       mounted last, at "":
         stremio_app                   CORS: any origin, GET only, no credentials
           curated catalog routes      /c/{token}/...
-          legacy Stremio routes       only when ENABLE_LEGACY is true
 
 The Stremio sub-app is a catch-all: anything registered on the parent after create_app()
 returns is shadowed by it. Register /ops and /configure (each its own sub-app, without CORS)
@@ -38,8 +36,8 @@ from app import __version__
 from app.core.config import settings
 from app.core.logging import describe_error, logger
 
-# Path segments that carry a credential: /config/{encrypted blob}/... and /c/{access token}/...
-_SECRET_SEGMENT = re.compile(r"/(config|c)/[^/?#]+")
+# Path segment that carries a credential: /c/{access token}/...
+_SECRET_SEGMENT = re.compile(r"/(c)/[^/?#]+")
 
 
 def mask_url(url: str) -> str:
@@ -76,28 +74,14 @@ def _open_store() -> None:
         raise
 
 
-def create_app(enable_legacy: bool | None = None) -> FastAPI:
-    """
-    Build the ASGI application.
-
-    Args:
-        enable_legacy: mount the upstream configure UI and /config/{blob}/ routes.
-            Defaults to settings.ENABLE_LEGACY.
-    """
-    if enable_legacy is None:
-        enable_legacy = settings.ENABLE_LEGACY
+def create_app() -> FastAPI:
+    """Build the ASGI application."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Open (and if needed create and migrate) the database now, so a missing or
         # unwritable volume stops the web service at startup instead of at the first request.
         await run_in_threadpool(_open_store)
-        if enable_legacy:
-            from app.services.cache import CACHE_INSTANCE
-
-            logger.info("Legacy routes enabled. Cache backend: %s", "Redis" if CACHE_INSTANCE.is_redis else "in-memory")
-        else:
-            logger.info("Legacy routes disabled")
         yield
 
     app = FastAPI(
@@ -142,14 +126,6 @@ def create_app(enable_legacy: bool | None = None) -> FastAPI:
 
     stremio_app.include_router(curated_router)
 
-    if enable_legacy:
-        # Imported lazily: these modules need ENCRYPTION_KEY, which is optional when legacy is off.
-        from app.api.stremio import router as stremio_router
-        from app.api.web import router as web_router
-
-        app.include_router(web_router)
-        stremio_app.include_router(stremio_router)
-
     # Operations: its own sub-app without CORS, mounted before the catch-all so its unknown
     # paths and preflights never reach the Stremio CORS middleware.
     from app.api.ops import create_ops_app
@@ -160,24 +136,23 @@ def create_app(enable_legacy: bool | None = None) -> FastAPI:
     # on, missing or weak secrets stop the service here, at startup.
     from app.api.admin import check_editor_settings, create_admin_app
 
-    check_editor_settings(enable_legacy)
+    check_editor_settings()
 
-    if not enable_legacy:  # the legacy UI owns "/" and "/configure" (check_editor_settings refuses both)
-        from fastapi.responses import JSONResponse, RedirectResponse
+    from fastapi.responses import JSONResponse, RedirectResponse
 
-        @app.api_route("/configure", methods=["GET", "HEAD", "POST", "OPTIONS"], include_in_schema=False)
-        async def editor_root(request: Request):
-            # The mount below only matches "/configure/..."; without this the bare path would reach
-            # the Stremio catch-all (and its CORS header).
-            if not settings.ENABLE_EDITOR:
-                return JSONResponse({"detail": "Not Found"}, status_code=404)
-            return RedirectResponse("/configure/", status_code=308)
+    @app.api_route("/configure", methods=["GET", "HEAD", "POST", "OPTIONS"], include_in_schema=False)
+    async def editor_root(request: Request):
+        # The mount below only matches "/configure/..."; without this the bare path would reach
+        # the Stremio catch-all (and its CORS header).
+        if not settings.ENABLE_EDITOR:
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return RedirectResponse("/configure/", status_code=308)
 
-        @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
-        async def site_root(request: Request):
-            if not settings.ENABLE_EDITOR:
-                return JSONResponse({"detail": "Not Found"}, status_code=404)
-            return RedirectResponse("/configure/", status_code=303)
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+    async def site_root(request: Request):
+        if not settings.ENABLE_EDITOR:
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return RedirectResponse("/configure/", status_code=303)
 
     admin_app = create_admin_app()
     app.mount("/configure", admin_app)

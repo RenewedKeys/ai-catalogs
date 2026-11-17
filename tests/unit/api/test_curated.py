@@ -42,7 +42,7 @@ def publish(catalog_id, batch, name="Daily Example Catalog", definition=None, st
 def client(monkeypatch):
     monkeypatch.setattr(settings, "ADDON_ACCESS_TOKEN", TOKEN)
     monkeypatch.setattr(settings, "PUBLIC_BASE_URL", None)
-    return TestClient(create_app(enable_legacy=False))
+    return TestClient(create_app())
 
 
 def aiometadata_read(client, manifest_url, catalog, genre=None, max_pages=20):
@@ -88,7 +88,7 @@ def test_manifest_shape(client):
 def test_manifest_artwork_uses_public_base_url(client, monkeypatch):
     monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://catalogs.example.org")
     manifest = client.get(f"/c/{TOKEN}/manifest.json").json()
-    assert manifest["logo"] == "https://catalogs.example.org/static/logo2_256.png"
+    assert manifest["logo"] == "https://catalogs.example.org/static/logo_256.png"
 
 
 def test_empty_database_serves_an_empty_manifest(client):
@@ -173,7 +173,7 @@ def test_wrong_token_is_indistinguishable_from_a_missing_route(client, token):
 def test_without_a_token_the_segment_is_public(monkeypatch):
     monkeypatch.setattr(settings, "ADDON_ACCESS_TOKEN", None)
     publish("daily_example", films(0, 3))
-    client = TestClient(create_app(enable_legacy=False))
+    client = TestClient(create_app())
     assert client.get("/c/public/manifest.json").status_code == 200
     assert client.get(f"/c/{TOKEN}/manifest.json").status_code == 404
 
@@ -190,13 +190,6 @@ def test_curated_routes_send_cors_headers(client):
     publish("daily_example", films(0, 3))
     response = client.get(f"/c/{TOKEN}/manifest.json", headers={"Origin": "https://aiometadata.example"})
     assert response.headers["access-control-allow-origin"] == "*"
-
-
-def test_curated_routes_work_with_legacy_on(monkeypatch):
-    monkeypatch.setattr(settings, "ADDON_ACCESS_TOKEN", None)
-    publish("daily_example", films(0, 3))
-    client = TestClient(create_app(enable_legacy=True))
-    assert len(client.get("/c/public/catalog/movie/daily_example.json").json()["metas"]) == 3
 
 
 # --- the AIOMetadata contract -----------------------------------------------------------
@@ -249,3 +242,11 @@ def test_catalog_id_survives_aiometadata_id_mangling(client):
     for c in manifest["catalogs"]:
         assert re.sub(r"[^a-zA-Z0-9]", "_", c["id"]) == c["id"]
         assert quote(c["id"], safe="") == c["id"]
+
+
+def test_manifest_artwork_files_are_served(client):
+    for name, size in (("logo_256.png", (256, 256)), ("background.png", (1920, 1080))):
+        r = client.get(f"/static/{name}")
+        assert r.status_code == 200 and r.headers["content-type"] == "image/png", name
+        width, height = int.from_bytes(r.content[16:20], "big"), int.from_bytes(r.content[20:24], "big")
+        assert (width, height) == size, name

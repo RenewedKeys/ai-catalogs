@@ -1,5 +1,5 @@
 # Two services from one locally built image:
-#   web     serves HTTP (catalog routes; legacy UI only when ENABLE_LEGACY=true)
+#   web     serves HTTP: the addon routes, and the editor at /configure when ENABLE_EDITOR=true
 #   worker  runs the scheduler: schedules, catch-up, recovery, nightly backups (PLAN.md section 11)
 #
 # Secrets come from a .env file next to this file (see .env.example). Never commit it.
@@ -36,12 +36,6 @@ services:
       timeout: 10s
       start_period: 120s
       retries: 3
-
-  # Redis is only used by the legacy routes (ENABLE_LEGACY=true). To use it, uncomment this
-  # service and set REDIS_HOST=redis in .env. Do not publish its port.
-  # redis:
-  #   image: redis:7-alpine
-  #   restart: unless-stopped
 
 volumes:
   # Must be a local filesystem (not NFS/SMB): it will hold the SQLite database.

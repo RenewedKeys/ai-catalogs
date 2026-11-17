@@ -1,10 +1,9 @@
 """
 LLM layer for curated catalogs (PLAN.md section 7).
 
-``CuratedLLMService`` builds on the upstream ``app.services.llm.LLMService`` foundation (an
-``openai.AsyncOpenAI`` client against ``OPENAI_BASE_URL``, OpenRouter by default; strict
-structured output with a ``json_object`` fallback; the same accuracy rules in the system
-message) and changes what a scheduled, budgeted pipeline needs:
+``CuratedLLMService`` uses an ``openai.AsyncOpenAI`` client against ``OPENAI_BASE_URL``
+(OpenRouter by default), strict structured output with fallbacks, and accuracy rules in the
+system message, shaped for a scheduled, budgeted pipeline:
 
 - **Every attempt is visible to the budget.** The SDK's own retries are off
   (``max_retries=0``); each attempt, including format downgrades and transient retries

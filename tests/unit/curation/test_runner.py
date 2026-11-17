@@ -135,11 +135,13 @@ async def test_lost_lease_cancels_the_run_and_writes_nothing(films):
 async def test_start_recovers_abandoned_jobs(films):
     job_id = enqueue()
     with db.session() as conn:
-        dead = acquire_lease(conn, "dead", 1)
+        # Long enough to claim the job even on a slow CI machine (a 1 ms lease could expire
+        # between acquire and claim), short enough to wait out below.
+        dead = acquire_lease(conn, "dead", 200)
         from app.store.jobs import claim_job
 
         claim_job(conn, dead)
-    await asyncio.sleep(0.01)  # the dead holder's 1 ms lease expires
+    await asyncio.sleep(0.3)  # the dead holder's 200 ms lease expires
     runner = Runner(owner="a", services=FakeServices(ScriptedLLM(sorted(films), films), UniverseTMDB(films)))
     assert await runner.start()
     job, run = job_and_run(job_id)

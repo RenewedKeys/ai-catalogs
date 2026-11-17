@@ -22,7 +22,7 @@ COPY . .
 # user; the CLI drops root the same way (app/core/privileges.py). Like linuxserver images.
 RUN chmod +x /app/entrypoint.sh \
     && adduser -D -u 1000 appuser \
-    && mkdir -p /data \
+    && mkdir -p /data /app/catalogs.d \
     && chown -R appuser:appuser /data
 
 EXPOSE 8000
