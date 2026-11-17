@@ -244,3 +244,28 @@ async def test_rollback_during_a_run_supersedes_it(films):
         assert [m["id"] for m in active_metas(conn, CID)] == ["tt1"]  # the rollback stands
         states = [tuple(r) for r in conn.execute("SELECT id, state FROM jobs ORDER BY id")]
     assert states == [(job_id, "done"), (job_id + 1, "pending")]
+
+
+async def test_stop_waits_for_an_in_flight_renewal_before_releasing(monkeypatch):
+    """A renewal still running in the heartbeat thread must not re-extend a released lease."""
+    import threading
+    import time as _time
+
+    import app.curation.runner as runner_module
+
+    real = runner_module.heartbeat
+    in_flight = threading.Event()
+
+    def slow_heartbeat(conn, lease, claim, ttl):
+        in_flight.set()
+        _time.sleep(0.3)
+        real(conn, lease, claim, ttl)
+
+    monkeypatch.setattr(runner_module, "heartbeat", slow_heartbeat)
+    runner = Runner(owner="a", heartbeat_s=0.01)
+    assert await runner.start()
+    await asyncio.to_thread(in_flight.wait, 5)
+    await runner.stop()
+    await asyncio.sleep(0.4)  # long enough for an undrained renewal to land
+    with db.session() as conn:
+        assert conn.execute("SELECT expires_at FROM lease").fetchone()[0] == 0

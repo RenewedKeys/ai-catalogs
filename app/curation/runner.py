@@ -189,7 +189,10 @@ class Runner:
                 pass
             self._heartbeat_task = None
         if self._beat_executor is not None:
-            self._beat_executor.shutdown(wait=False)
+            # Cancelling the task does not stop a renewal already running in the heartbeat
+            # thread; if it finished after the release below, it would extend the lease again
+            # and the next process would wait out a full TTL. Let it drain first.
+            await asyncio.to_thread(self._beat_executor.shutdown, True)
             self._beat_executor = None
         if self.lease is not None and not self.lost:
             try:
