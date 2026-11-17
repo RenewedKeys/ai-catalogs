@@ -1,5 +1,5 @@
 """
-The viewer's watched films, from MDBList (PLAN.md section 19).
+The viewer's watched films, from MDBList (PLAN.md section 20).
 
 A catalog with ``exclude_watched: true`` never publishes a film the owner has already
 watched. The watched set comes from the owner's MDBList account (``GET /sync/watched``,
@@ -10,15 +10,17 @@ which MDBList fills from Trakt, Plex, Jellyfin and its own check-ins) and is mat
   query parameter, so every request URL carries it: URLs and exception text are never
   logged or stored, only ``WatchedError`` categories and HTTP statuses.
 - Fetch: ``mediatype=movie``, full payload (``extended=ids_only`` drops the IMDb id and the
-  title), cursor pagination (``pagination.next_cursor``) at 1,000 rows per page.
+  title), cursor pagination (``pagination.next_cursor``) at 1,000 rows per page. Should a
+  full page (or a ``pagination.total`` larger than the rows read) come without a cursor, the
+  rest is read by ``offset``; a final count below ``total`` is an error, never a partial set.
 - Cache: one row in ``watched_cache``, written only after a complete fetch, reused for
   ``WATCHED_TTL_MS`` (6 h) by every catalog and run. An expired cache whose refresh fails
   fails the run: a list is never published without the filter, and never with a stale one.
 - Errors: ``WatchedError.category`` is one of ``mdblist_auth`` (401/403), ``mdblist_rate_limit``
   (429), ``mdblist_http_5xx``, ``mdblist_timeout``, ``mdblist_transport``,
-  ``mdblist_http_4xx``, ``mdblist_schema`` (unexpected payload) and ``config`` (no key). The
-  first four after the retries are transient: the job is retried later and the previous
-  snapshot stays active.
+  ``mdblist_http_4xx``, ``mdblist_schema`` (unexpected payload) and ``config`` (no key).
+  Rate limit, 5xx, timeout and transport errors (after the retries) are transient: the job
+  is retried later and the previous snapshot stays active.
 """
 
 import asyncio
@@ -245,24 +247,38 @@ class MDBListClient:
         """Every watched movie, all pages. Raises ``WatchedError``; never returns a partial set."""
         rows: list[Any] = []
         cursor: Optional[str] = None
+        offset: Optional[int] = None
         seen_cursors: set[str] = set()
+        total: Optional[int] = None
         for _ in range(MAX_PAGES):
             params: dict[str, Any] = {"mediatype": "movie", "limit": PAGE_LIMIT}
             if cursor:
                 params["cursor"] = cursor
+            elif offset is not None:
+                params["offset"] = offset
             body = await self._get(WATCHED_PATH, params)
             movies = body.get("movies")
             if not isinstance(movies, list):
                 raise WatchedError("mdblist_schema")  # never read a shape change as "nothing watched"
             rows.extend(movies)
-            pagination = body.get("pagination")
-            cursor = pagination.get("next_cursor") if isinstance(pagination, dict) else None
-            if not cursor or not movies:
-                return parse_rows(rows)
-            if not isinstance(cursor, str) or cursor in seen_cursors:
-                raise WatchedError("mdblist_schema")
-            seen_cursors.add(cursor)
-        raise WatchedError("mdblist_schema")  # the cursor never ran out
+            pagination = body.get("pagination") if isinstance(body.get("pagination"), dict) else {}
+            if isinstance(pagination.get("total"), int) and not isinstance(pagination.get("total"), bool):
+                total = pagination["total"]
+            next_cursor = pagination.get("next_cursor")
+            if next_cursor and movies:
+                if not isinstance(next_cursor, str) or next_cursor in seen_cursors:
+                    raise WatchedError("mdblist_schema")
+                seen_cursors.add(next_cursor)
+                cursor, offset = next_cursor, None
+                continue
+            more = movies and (len(movies) >= PAGE_LIMIT or (total is not None and len(rows) < total))
+            if more and not cursor:
+                offset = len(rows)  # no cursor came back: read on by offset
+                continue
+            if total is not None and len(rows) < total:
+                raise WatchedError("mdblist_schema")  # never a partial set
+            return parse_rows(rows)
+        raise WatchedError("mdblist_schema")  # the pages never ran out
 
 
 # --------------------------------------------------------------------------- cache

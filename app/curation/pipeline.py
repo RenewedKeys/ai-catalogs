@@ -411,6 +411,7 @@ class Pipeline:
             self.watched = await load_watched(self.watched_client_factory, db_path=self.db_path)
         except WatchedError as e:
             if e.category == "config":
+                logger.error("[%s] exclude_watched is set but MDBLIST_API_KEY is not", self.catalog_id)
                 raise PipelineFailure("config", detail="exclude_watched is set but MDBLIST_API_KEY is not") from None
             logger.warning("[%s] watched history unavailable: %s", self.catalog_id, e.category)
             raise PipelineFailure(e.category, status=e.status_code, transient=e.transient) from None

@@ -1,5 +1,5 @@
 """
-``exclude_watched``: the viewer's watched films from MDBList (PLAN.md section 19). A fake
+``exclude_watched``: the viewer's watched films from MDBList (PLAN.md section 20). A fake
 MDBList (``httpx.MockTransport``) only; nothing here talks to the real service. Every film
 is a neutral placeholder ("Film 1", ...).
 """
@@ -55,6 +55,8 @@ class FakeMDBList:
         self.requests: list[httpx.Request] = []
         self.fail_with: Optional[int] = None
         self.fail_on_page: Optional[int] = None  # 1-based
+        self.cursors = True  # False: never send next_cursor (offset paging)
+        self.total: Optional[int] = len(watched)
 
     def row(self, n: int, i: int) -> dict:
         ids = {"imdb": f"tt{IMDB_BASE + n}", "trakt": 900_000 + n, "mdblist": f"m{n}"}
@@ -70,19 +72,22 @@ class FakeMDBList:
         assert request.url.path == "/sync/watched"
         assert request.url.params["mediatype"] == "movie"
         assert request.url.params["apikey"] == MDBLIST_KEY_SENTINEL
-        start = int(request.url.params.get("cursor", "0,0").split(",")[1])
+        if "offset" in request.url.params:
+            start = int(request.url.params["offset"])
+        else:
+            start = int(request.url.params.get("cursor", "0,0").split(",")[1])
         page = start // self.page_size + 1
         if self.fail_with and (self.fail_on_page is None or self.fail_on_page == page):
             return httpx.Response(self.fail_with, json={"error": f"nope {BODY_SENTINEL} {MDBLIST_KEY_SENTINEL}"})
         chunk = self.watched[start : start + self.page_size]
         end = start + len(chunk)
-        next_cursor = f"1700000000,{end}" if end < len(self.watched) else None
+        next_cursor = f"1700000000,{end}" if end < len(self.watched) and self.cursors else None
         return httpx.Response(
             200,
             json={
                 "movies": [self.row(n, start + i) for i, n in enumerate(chunk)],
                 "shows": [],
-                "pagination": {"limit": self.page_size, "next_cursor": next_cursor},
+                "pagination": {"limit": self.page_size, "next_cursor": next_cursor, "total": self.total},
             },
         )
 
@@ -221,6 +226,23 @@ async def test_a_failed_page_caches_nothing():
         assert conn.execute("SELECT COUNT(*) FROM watched_cache").fetchone()[0] == 0
     mdb.fail_with = None
     assert len(await load_watched(mdb.client)) == 2500
+
+
+async def test_pages_without_a_cursor_are_read_by_offset():
+    mdb = FakeMDBList(list(range(1, 2501)))
+    mdb.cursors = False
+    watched = await mdb.client().watched_movies()
+    assert len(watched) == 2500 and len(mdb.requests) == 3
+    assert [r.url.params.get("offset") for r in mdb.requests] == [None, "1000", "2000"]
+
+
+async def test_fewer_rows_than_the_reported_total_is_an_error():
+    mdb = FakeMDBList(list(range(1, 501)))
+    mdb.total = 700
+    mdb.cursors = False
+    with pytest.raises(WatchedError) as e:
+        await mdb.client().watched_movies()
+    assert e.value.category == "mdblist_schema"
 
 
 # --------------------------------------------------------------------------- failures

@@ -165,6 +165,8 @@ and RPDB URLs would leak the key).
 - `llm_ledger(id, day, catalog_id, run_id, at, kind, model, tokens_in, tokens_out)`; one
   row per outbound model attempt, written **before** the call (reservation) and updated after.
 - `tmdb_cache(key, tmdb_id, details_json, fetched_at)`.
+- `watched_cache(key, fetched_at, item_count, payload_json)` (migration 4, section 20): the
+  owner's watched films from MDBList, one row, 6 h TTL.
 
 Transactions and recovery:
 - **Lease + fencing:** acquisition/takeover is
@@ -344,6 +346,7 @@ except the prompt is optional and off or neutral unless set:
 | `max_per_collection` | selection | hard |
 | `director_cap` (costs one cached credits call per candidate) | selection | hard |
 | `decade_min` | selection | hard quota |
+| `exclude_watched` (the owner's watched films from MDBList; section 20) | pipeline + final assertion | hard (code) |
 | `category_min` (LLM-reported `category`) | selection | soft quota: ranks selection and steers top-ups, never fails a run, because the label is the model's own claim |
 | shuffled flat list | JSON schema + code shuffle | hard |
 
@@ -757,10 +760,13 @@ from Trakt, Plex, Jellyfin and its own check-ins).
   repeated cursor is an error). Rows `movies[].movie.ids.{tmdb, imdb}`; rows with neither id
   are skipped. A 200 without a `movies` list is `mdblist_schema`, never "nothing watched". Free
   accounts allow 1,000 requests per day; a run needs `ceil(watched / 1000)` requests at most
-  every 6 h. The endpoint is not documented as supporter-only.
+  every 6 h. The endpoint is not documented as supporter-only. If a full page, or a
+  `pagination.total` above the rows read, comes without a cursor, the rest is read by
+  `offset`; fewer rows than `total` in the end is `mdblist_schema`.
 - **Cache**: migration 4, table `watched_cache(key, fetched_at, item_count, payload_json)`, one
   row (`mdblist:movies`) shared by every catalog, written in one transaction only after a
-  complete fetch, read while younger than 6 h. No key material in it. An expired cache whose
+  complete fetch, read while younger than 6 h. No key material in it, so a changed key or
+  account keeps the old set for up to 6 h. Dry runs refresh it too. An expired cache whose
   refresh fails fails the run; there is no stale fallback.
 - **Pipeline**: loaded once in setup, before generation. Stage 5-8: a resolved `tmdb_id` in the
   set is rejected as `watched` before its details lookup; the IMDb id from the details is
