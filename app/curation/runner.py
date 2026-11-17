@@ -41,6 +41,7 @@ from app.curation.llm import CuratedLLMService, LLMSettings
 from app.curation.pipeline import Pipeline, PipelineFailure, PipelineResult
 from app.curation.prompt import make_nonce, make_seed
 from app.curation.tmdb_gate import TMDBClient, TMDBGate
+from app.curation.watched import MDBListClient
 from app.store import db
 from app.store.jobs import (
     LEASE_NAME,
@@ -80,6 +81,10 @@ class Services:
 
     def make_gate(self) -> TMDBGate:
         return TMDBGate(db_path=self.db_path)
+
+    def make_watched_client(self) -> MDBListClient:
+        """For ``exclude_watched``; raises ``WatchedError("config")`` when no key is set."""
+        return MDBListClient()
 
     def make_tmdb_client(self) -> TMDBClient:
         """For resolving exclusion names when definitions are applied."""
@@ -302,6 +307,7 @@ class Runner:
                 llm=llm,
                 gate=gate,
                 db_path=self.db_path,
+                watched_client_factory=self.services.make_watched_client,
             )
             return await pipeline.run()
         finally:

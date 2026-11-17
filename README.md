@@ -147,6 +147,7 @@ form, so whoever holds that URL can spend them through this server.
 |---|---|
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL` | OpenRouter (default) or another OpenAI-compatible API |
 | `TMDB_API_KEY` | TMDB v4 read access token |
+| `MDBLIST_API_KEY` | Optional. MDBList API key, used only by catalogs with `exclude_watched: true` (skip films you have watched) |
 | `PUBLIC_BASE_URL` | Externally reachable URL of this server |
 | `ADDON_ACCESS_TOKEN` | Secret path segment of the addon URLs (16+ characters); unset means `public` |
 | `OPS_TOKEN` | Bearer token for `/ops`; unset disables it |

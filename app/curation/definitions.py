@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, model_validator
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
@@ -76,12 +76,15 @@ class CatalogDefinition(BaseModel):
     categories: list[str] = Field(default_factory=list)
     anchors: list[str] = Field(default_factory=list)
     history_prompt_limit: int | None = Field(default=None, ge=0, le=1000)
+    watched_prompt_limit: int | None = Field(default=None, ge=0, le=500)
     max_prompt_chars: int | None = Field(default=None, ge=1000, le=200_000)
 
     # Exclusions (resolved to TMDB ids when applied)
     blacklist_titles: list[Any] = Field(default_factory=list)
     blacklist_tmdb_ids: list[int] = Field(default_factory=list)
     franchise_denylist: Any = None
+    # The owner's watched films (MDBList, MDBLIST_API_KEY in env); hard filter on ids
+    exclude_watched: StrictBool = False
 
     # Limits (app.curation.limits validates them)
     min_vote_average: Any = None

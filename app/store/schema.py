@@ -199,6 +199,23 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    (
+        4,
+        [
+            # The owner's watched films from MDBList (app.curation.watched), shared by every
+            # catalog with exclude_watched. One row per source, replaced only after a complete
+            # fetch; read while younger than its TTL (6 h). JSON: {"tmdb_ids", "imdb_ids",
+            # "titles": [[title, year], ...] most recently watched first}. No key material.
+            """
+            CREATE TABLE watched_cache (
+                key          TEXT PRIMARY KEY,
+                fetched_at   INTEGER NOT NULL,
+                item_count   INTEGER NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """,
+        ],
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

@@ -17,16 +17,19 @@ Variables (always all defined, so validation and production behave the same):
     exclusions                                       history block: "DO NOT INCLUDE:" lines
     already_this_run                                 block of titles produced earlier this run
     unmet                                            block naming unmet quotas (top-up rounds)
+    watched                                          block of films the viewer has watched
+                                                     (``exclude_watched``; empty otherwise)
 
 Blocks the template does not place itself are appended after it, in this order: limits,
-unmet, already-this-run, exclusions. So a plain free-form prompt still gets every limit and
+unmet, already-this-run, exclusions, watched. So a plain free-form prompt still gets every limit and
 exclusion, and a template that wants them elsewhere just references the variable.
 
 ``seed`` = sha256(date, catalog id, per-run nonce). It drives the category and anchor
 shuffle here and the final shuffle in selection, and is stored in ``runs``.
 
 The rendered prompt is capped (``max_prompt_chars``, default 24,000). Over the cap, the
-exclusion block loses its oldest lines first, then the already-this-run block; the
+watched block loses its last lines first, then the exclusion block its oldest lines, then
+the already-this-run block; the
 template text and the constraints block are never cut. If it is still too long,
 ``PromptError`` is raised (a ``config`` error).
 """
@@ -47,9 +50,11 @@ from app.curation.tmdb_gate import clean_title
 
 DEFAULT_MAX_PROMPT_CHARS = 24_000
 DEFAULT_HISTORY_PROMPT_LIMIT = 150
+DEFAULT_WATCHED_PROMPT_LIMIT = 50
 TITLES_PER_LINE = 12
 EXCLUSION_PREFIX = "DO NOT INCLUDE:"
 ALREADY_PREFIX = "ALREADY SUGGESTED THIS RUN (do not repeat):"
+WATCHED_PREFIX = "ALREADY WATCHED BY THE VIEWER (do not include):"
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
 TEMPLATE_VARIABLES = frozenset(
@@ -70,11 +75,12 @@ TEMPLATE_VARIABLES = frozenset(
         "exclusions",
         "already_this_run",
         "unmet",
+        "watched",
     }
 )
 
 # Blocks appended after the template unless it references them, in this order.
-_APPENDABLE = ("limits_block", "unmet", "already_this_run", "exclusions")
+_APPENDABLE = ("limits_block", "unmet", "already_this_run", "exclusions", "watched")
 
 
 class PromptError(ValueError):
@@ -114,7 +120,11 @@ def _title_lines(prefix: str, titles: Sequence[str]) -> list[str]:
     return [f"{prefix} " + "; ".join(titles[i : i + TITLES_PER_LINE]) for i in range(0, len(titles), TITLES_PER_LINE)]
 
 
-def exclusion_lines(history: Iterable[tuple[str, int | None]], limit: int = DEFAULT_HISTORY_PROMPT_LIMIT) -> list[str]:
+def exclusion_lines(
+    history: Iterable[tuple[str, int | None]],
+    limit: int = DEFAULT_HISTORY_PROMPT_LIMIT,
+    prefix: str = EXCLUSION_PREFIX,
+) -> list[str]:
     """
     "DO NOT INCLUDE:" lines of at most 12 titles, for the ``limit`` most recent titles.
     ``history`` is ordered most recent first; duplicates are dropped.
@@ -131,7 +141,7 @@ def exclusion_lines(history: Iterable[tuple[str, int | None]], limit: int = DEFA
         titles.append(text)
         if len(titles) >= limit:
             break
-    return _title_lines(EXCLUSION_PREFIX, titles)
+    return _title_lines(prefix, titles)
 
 
 def already_lines(titles: Iterable[tuple[str, int | None]]) -> list[str]:
@@ -160,11 +170,15 @@ class RenderedPrompt:
     exclusion_lines_total: int
     already_lines_used: int
     already_lines_total: int
+    watched_lines_used: int = 0
+    watched_lines_total: int = 0
 
     @property
     def truncated(self) -> bool:
         return (
-            self.exclusion_lines_used < self.exclusion_lines_total or self.already_lines_used < self.already_lines_total
+            self.exclusion_lines_used < self.exclusion_lines_total
+            or self.already_lines_used < self.already_lines_total
+            or self.watched_lines_used < self.watched_lines_total
         )
 
 
@@ -232,9 +246,12 @@ def _render(template: jinja2.Template, context: Mapping[str, Any]) -> str:
         raise PromptError(f"template failed to render: {type(e).__name__}") from None
 
 
-def _assemble(template, referenced, context, exclusions: list[str], already: list[str], unmet_text: str) -> str:
+def _assemble(
+    template, referenced, context, exclusions: list[str], already: list[str], unmet_text: str, watched: list[str] = ()
+) -> str:
     ctx = dict(context)
     ctx["exclusions"] = "\n".join(exclusions)
+    ctx["watched"] = "\n".join(watched)
     ctx["already_this_run"] = "\n".join(already)
     ctx["unmet"] = unmet_text
     parts = [_render(template, ctx)]
@@ -255,29 +272,52 @@ def render_prompt(
     target_count: int | None = None,
     request_count: int | None = None,
     max_chars: int | None = None,
+    watched: Iterable[tuple[str, int | None]] = (),
 ) -> RenderedPrompt:
     """
     Render a catalog's prompt for one generation batch. ``history`` is the history window's
-    titles, most recent first; ``already_this_run`` the titles produced earlier in this run.
+    titles, most recent first; ``already_this_run`` the titles produced earlier in this run;
+    ``watched`` the viewer's watched films, most recently watched first (at most
+    ``watched_prompt_limit`` of them, default 50, are named).
     """
     template, referenced = compile_template(definition.get("prompt"))
     limit = int(definition.get("history_prompt_limit", DEFAULT_HISTORY_PROMPT_LIMIT))
     cap = int(max_chars or definition.get("max_prompt_chars") or DEFAULT_MAX_PROMPT_CHARS)
     context = build_context(definition, today=today, seed=seed, target_count=target_count, request_count=request_count)
+    watched_limit = definition.get("watched_prompt_limit")
+    watched_limit = DEFAULT_WATCHED_PROMPT_LIMIT if watched_limit is None else int(watched_limit)
     excl = exclusion_lines(history, max(limit, 0))
+    seen = exclusion_lines(watched, max(watched_limit, 0), prefix=WATCHED_PREFIX)
     already = already_lines(already_this_run)
     unmet_text = unmet_block(list(unmet))
 
-    n_excl, n_already = len(excl), len(already)
-    text = _assemble(template, referenced, context, excl[:n_excl], already[:n_already], unmet_text)
-    # Shrink the exclusion block (oldest lines are last), then the already-this-run block
-    # (oldest first: keep the newest lines, which the model is most likely to repeat).
+    n_excl, n_already, n_seen = len(excl), len(already), len(seen)
+
+    def assemble() -> str:
+        return _assemble(
+            template,
+            referenced,
+            context,
+            excl[:n_excl],
+            already[len(already) - n_already :],
+            unmet_text,
+            seen[:n_seen],
+        )
+
+    text = assemble()
+    # Shrink the watched block (least recently watched lines are last), then the exclusion
+    # block (oldest lines are last), then the already-this-run block (oldest first: keep the
+    # newest lines, which the model is most likely to repeat). The code filters remain the
+    # guarantee for all three.
+    while len(text) > cap and n_seen > 0:
+        n_seen -= 1
+        text = assemble()
     while len(text) > cap and n_excl > 0:
         n_excl -= 1
-        text = _assemble(template, referenced, context, excl[:n_excl], already[len(already) - n_already :], unmet_text)
+        text = assemble()
     while len(text) > cap and n_already > 0:
         n_already -= 1
-        text = _assemble(template, referenced, context, excl[:n_excl], already[len(already) - n_already :], unmet_text)
+        text = assemble()
     if len(text) > cap:
         raise PromptError(f"prompt is {len(text)} characters without exclusions; the cap is {cap}")
     return RenderedPrompt(
@@ -288,6 +328,8 @@ def render_prompt(
         exclusion_lines_total=len(excl),
         already_lines_used=n_already,
         already_lines_total=len(already),
+        watched_lines_used=n_seen,
+        watched_lines_total=len(seen),
     )
 
 
@@ -308,6 +350,7 @@ def validate_definition_prompt(definition: Mapping[str, Any]) -> RenderedPrompt:
         raise PromptError(f"template uses unknown variable(s): {', '.join(unknown)}")
     sample_history = [(f"Sample Title {i}", 1990 + i % 30) for i in range(1, 30)]
     sample_run = [(f"Sample Run Title {i}", 2000 + i % 20) for i in range(1, 15)]
+    sample_watched = [(f"Sample Watched Title {i}", 1985 + i % 35) for i in range(1, 15)]
     return render_prompt(
         definition,
         today=SAMPLE_DATE,
@@ -315,4 +358,5 @@ def validate_definition_prompt(definition: Mapping[str, Any]) -> RenderedPrompt:
         history=sample_history,
         already_this_run=sample_run,
         unmet=["At least 1 more film(s) released in the 1990s."],
+        watched=sample_watched,
     )

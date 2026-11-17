@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     # TMDB settings
     TMDB_READ_ACCESS_TOKEN: str | None = Field(default=None, alias="TMDB_API_KEY")
 
+    # MDBList: the owner's watched history, for catalogs with `exclude_watched: true`
+    MDBLIST_API_KEY: str | None = Field(default=None, description="MDBList API key (mdblist.com/preferences)")
+
     # RPDB settings
     RPDB_API_KEY: str | None = Field(default=None)
 
