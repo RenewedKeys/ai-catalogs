@@ -67,6 +67,36 @@ restart neither skips nor repeats a run; runs missed while the worker was down a
 run. A catalog without a schedule refreshes only when asked (CLI or `/ops`). Each refresh
 still counts against `max_runs_per_day` and the daily model-call budget.
 
+## Browser editor: `/admin`
+
+Off by default. Set `ENABLE_EDITOR=true`, `SESSION_SECRET` (at least 32 bytes) and
+`ADMIN_PASSWORD` (at least 12 characters) in `.env`; with the flag on and a secret missing or
+too short, the web service does not start. Then open `https://<your server>/admin/` and log in.
+
+- **Edit** a catalog in a form generated from the definition fields (sliders for bounded
+  limits, an empty box means "off"), or as raw YAML. **Validate** runs the same checks as
+  `python -m app.curation validate` and shows the prompt rendered for a sample day; **Save**
+  makes the definition live at once (a refresh in progress ends `superseded` and is queued again).
+- **Files vs editor.** A catalog from `catalogs.d` is read-only in the editor until you press
+  **Move to editor**. From then on the editor owns it: the file is ignored (delete or rename it)
+  and its removal does not remove the catalog. The move is one-way; to go back, export the YAML,
+  delete the catalog in the editor, then put the file back. New catalogs can be created in the
+  editor directly. **Export YAML** downloads a definition (comments are not kept).
+- **Dry run** queues a dry run of the saved definition for the worker and shows its stage counts
+  and reject reasons when it ends. It spends model calls but publishes nothing. To tune a new
+  catalog without it going live on a schedule: save it without `schedule`, dry-run until the
+  counts look right, then add the schedule.
+- **Rollback**: the catalog page lists the published lists; roll back to any that still has its
+  payload and was not revoked.
+
+Security: one password, a signed HttpOnly SameSite=Strict cookie (Secure when `PUBLIC_BASE_URL`
+is https) that lasts 12 hours, a CSRF token on every form, no CORS. Logging out clears the cookie
+in that browser; changing `SESSION_SECRET` ends every session. After 5 failed logins from one
+address (or 20 in all) within 15 minutes, logins are refused until the window passes. Behind a
+reverse proxy every request comes from the proxy unless `FORWARDED_ALLOW_IPS` names it, and then
+someone guessing passwords can keep the login locked for you too, so set it and preferably
+restrict `/admin` at the proxy (IP allow-list or VPN).
+
 ## Operations: `/ops`
 
 Set `OPS_TOKEN` in `.env` to enable it (unset, every `/ops` path answers 404). Every request
@@ -151,6 +181,7 @@ form, so whoever holds that URL can spend them through this server.
 | `PUBLIC_BASE_URL` | Externally reachable URL of this server |
 | `ADDON_ACCESS_TOKEN` | Secret path segment of the addon URLs (16+ characters); unset means `public` |
 | `OPS_TOKEN` | Bearer token for `/ops`; unset disables it |
+| `ENABLE_EDITOR`, `SESSION_SECRET`, `ADMIN_PASSWORD` | The browser editor at `/admin` (off by default; see below) |
 | `BACKUP_DIR`, `BACKUP_KEEP` | Automatic backups; default `/data/backups`, 7 of each kind |
 | `DATABASE_PATH` | SQLite file; default `/data/ai-catalogs.sqlite` on the compose volume, which must be a local disk |
 | `ENABLE_LEGACY` | `true` mounts the upstream addon routes; needs `ENCRYPTION_KEY`. Trusted networks only |

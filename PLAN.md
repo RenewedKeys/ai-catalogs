@@ -890,3 +890,37 @@ unauthorised, missing path, preflight, each with `Origin`, no `Access-Control-*`
 nothing stored; save bumps rev/epoch; a stored definition loaded into the form and saved
 untouched keeps its `config_rev` (no spurious epoch bump); file vs editor ownership in `apply_dir`; dry run enqueued
 and its result shown; rollback ok and refused.
+
+## 22. Milestone 8 status
+
+Implemented on branch `milestone-8-editor`, as designed in section 21:
+
+- `app/api/admin.py`: the `/admin` sub-app (no CORS, mounted in `create_app()` before the
+  Stremio catch-all). `ENABLE_EDITOR` off -> 404 for every path; on -> `check_editor_settings()`
+  stops startup unless `SESSION_SECRET` has >= 32 bytes and `ADMIN_PASSWORD` >= 12 characters.
+  Stateless HMAC-SHA256 cookies (`aic_admin`, 12 h; a pre-login cookie binds the login form's
+  CSRF token), CSRF token + Origin/Referer check on every POST, login rate limit in table
+  `admin_login_failures` (migration 5). Without a session every path, unknown ones included,
+  redirects (GET) or answers 401; only the login page and its stylesheet are public. Responses
+  carry `no-store`, `X-Frame-Options: DENY` and a CSP without inline script or style.
+- `app/curation/editor.py`: form fields generated from `CatalogDefinition` (types and bounds of
+  `Any` fields from `Limits` / `LLMSettings` / `BudgetLimits`; a new field shows up in "Other",
+  as a YAML box if it has no simpler widget), form <-> definition with an exact round trip,
+  `check_definition` (`validate_definition` + prompt preview + exclusion resolution, reusing the
+  stored resolution), `save_checked` (lost-update guard on `config_rev`, `source = 'editor'`),
+  `move_to_editor`, `set_state`.
+- `app/curation/definitions.py`: `apply_dir` ignores files of editor-managed catalogs (status
+  `ignored`, nothing recorded) and never marks them removed.
+- `/ops` enqueue logic shared (`app.api.ops.enqueue`, trigger `admin` for editor dry runs);
+  `app.curation.status.catalog_status` for one catalog.
+- Templates and the small JS/CSS in `templates/admin/` (Jinja2 with autoescape).
+- Tests: `tests/unit/api/test_admin.py` (off by default, startup checks, cookie flags and
+  tampering, login CSRF, rate limits, CSRF + Origin on every POST route, CORS isolation and
+  headers, validation errors shown and nothing stored, untouched-form round trip keeps
+  `config_rev` (also parsed from the rendered HTML), stale form refused, TMDB failure saves
+  nothing, file -> editor ownership, dry run queued and its result shown, rollback and refusal,
+  generated widgets); the sentinel sweep now includes `SESSION_SECRET`, `ADMIN_PASSWORD` and
+  logged-in `/admin` pages and actions.
+- Not done (possible later additions): handing a catalog back from the editor to a file (no
+  trigger, see section 21), server-side session revocation, a history-clear button, showing a
+  dry run's titles (dry runs store no list).

@@ -216,6 +216,22 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    (
+        5,
+        [
+            # Failed /admin logins (app.api.admin), for the login rate limit shared by every
+            # uvicorn worker. ``client`` is the request's client address; rows older than the
+            # window are deleted on each attempt.
+            """
+            CREATE TABLE admin_login_failures (
+                id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                client TEXT NOT NULL,
+                at     INTEGER NOT NULL
+            )
+            """,
+            "CREATE INDEX admin_login_failures_by_at ON admin_login_failures (at)",
+        ],
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

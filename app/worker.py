@@ -155,6 +155,8 @@ class Worker:
         for r in report.files:
             if r.error:
                 logger.warning("Definition %s not applied: %s", r.file, r.error)
+            elif r.status == "ignored":
+                logger.info("Definition %s ignored: catalog %s is managed in the editor", r.file, r.catalog_id)
             elif r.status == "accepted":
                 logger.info("Definition %s accepted (catalog %s)", r.file, r.catalog_id)
         for catalog_id in report.removed:

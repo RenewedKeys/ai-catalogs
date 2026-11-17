@@ -41,7 +41,8 @@ def _authorized(request: Request) -> bool:
     return hmac.compare_digest(presented.strip().encode("utf-8"), token.encode("utf-8"))
 
 
-def _enqueue(catalog_id: str, kind: str) -> tuple[int, dict[str, Any]]:
+def enqueue(catalog_id: str, kind: str, trigger: str = "ops") -> tuple[int, dict[str, Any]]:
+    """Queue a job with run admission (shared by /ops and /admin). Returns (HTTP status, body)."""
     with db.session() as conn:
         row = conn.execute(
             "SELECT state, definition_json FROM catalog_defs WHERE catalog_id = ?", (catalog_id,)
@@ -53,7 +54,7 @@ def _enqueue(catalog_id: str, kind: str) -> tuple[int, dict[str, Any]]:
         except ValueError:
             return 409, {"status": "invalid_definition", "detail": "the stored definition is invalid"}
         status, job_id = enqueue_job(
-            conn, catalog_id, kind=kind, trigger="ops", max_runs_per_day=limits.max_runs_per_day
+            conn, catalog_id, kind=kind, trigger=trigger, max_runs_per_day=limits.max_runs_per_day
         )
         if status is Enqueued.QUEUED:
             return 202, {"status": "queued", "job_id": job_id, "kind": kind}
@@ -182,12 +183,12 @@ def create_ops_app() -> FastAPI:
 
     @ops.post("/catalogs/{catalog_id}/refresh")
     async def refresh(catalog_id: str) -> Response:
-        code, body = await run_in_threadpool(_enqueue, catalog_id, "refresh")
+        code, body = await run_in_threadpool(enqueue, catalog_id, "refresh")
         return JSONResponse(body, status_code=code)
 
     @ops.post("/catalogs/{catalog_id}/dry-run")
     async def dry_run(catalog_id: str) -> Response:
-        code, body = await run_in_threadpool(_enqueue, catalog_id, "dry_run")
+        code, body = await run_in_threadpool(enqueue, catalog_id, "dry_run")
         return JSONResponse(body, status_code=code)
 
     @ops.get("/status")

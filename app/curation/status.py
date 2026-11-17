@@ -154,6 +154,15 @@ def _catalog(conn: sqlite3.Connection, row: sqlite3.Row, now: int) -> dict[str, 
     }
 
 
+def catalog_status(conn: sqlite3.Connection, catalog_id: str, now: int) -> Optional[dict[str, Any]]:
+    """One catalog's entry of ``collect_status`` (the /admin catalog page)."""
+    row = conn.execute(
+        "SELECT catalog_id, name, state, source, last_error, definition_json FROM catalog_defs WHERE catalog_id = ?",
+        (catalog_id,),
+    ).fetchone()
+    return _catalog(conn, row, now) if row else None
+
+
 def collect_status(conn: sqlite3.Connection, now: int, db_path: Optional[str] = None) -> dict[str, Any]:
     day = ledger_day(now)
     used = conn.execute("SELECT COUNT(*) FROM llm_ledger WHERE day = ?", (day,)).fetchone()[0]

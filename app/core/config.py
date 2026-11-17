@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     OPS_TOKEN: str | None = Field(
         default=None, description="Bearer token for /ops (header only). Unset: /ops answers 404"
     )
+    # Browser editor at /admin (PLAN.md section 21). Off by default; when on, both secrets are
+    # required (create_app() refuses to start without them).
+    ENABLE_EDITOR: bool = Field(default=False, description="Mount the catalog editor at /admin")
+    SESSION_SECRET: str | None = Field(default=None, description="Signs /admin session cookies; >= 32 bytes")
+    ADMIN_PASSWORD: str | None = Field(default=None, description="Password of the /admin login; >= 12 characters")
 
     # Legacy (upstream stremio-ai-companion) surface: /configure, /save-config, /config/{blob}/...
     # Off by default. Only enable it on a trusted network.

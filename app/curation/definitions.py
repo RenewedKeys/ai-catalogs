@@ -18,6 +18,10 @@ so even a file that does not parse has an id to record its error against.
    is gone ``removed``. Only catalogs that came from a file are ever marked removed, and a
    missing directory is an error, never "every catalog removed".
 
+A catalog managed in the browser editor (``source = 'editor'``, PLAN.md section 21) belongs to
+the editor: a file with its id is ignored (status ``ignored``, nothing recorded) and a missing
+file never marks it removed.
+
 Values must be plain YAML (text, numbers, booleans, lists, mappings); a date or a timestamp
 is rejected, so the stored JSON equals what the file says.
 """
@@ -213,7 +217,7 @@ class FileResult:
     inputs: ExclusionInputs | None = None
     config_rev: str | None = None
     error: str | None = None
-    status: str = ""  # accepted | unchanged | invalid | resolve_failed (apply only)
+    status: str = ""  # accepted | unchanged | invalid | resolve_failed | ignored (apply only)
     unresolved: list[str] = field(default_factory=list)
 
     @property
@@ -326,6 +330,9 @@ async def apply_dir(
     resolved: dict[str, ResolvedExclusions] = {}
     pending: list[FileResult] = []
     for r in files:
+        if _editor_owned(stored, r.catalog_id):
+            _ignore(r)
+            continue
         if r.error:
             continue
         previous = ResolvedExclusions.from_json((stored.get(r.catalog_id) or {}).get("exclusions_json"))
@@ -344,6 +351,10 @@ async def apply_dir(
     with db.session(db_path) as conn, db.transaction(conn):
         stored = _stored(conn)  # re-read under the write lock
         for index, r in enumerate(files):
+            if r.status == "ignored" or _editor_owned(stored, r.catalog_id):
+                _ignore(r)
+                conn.execute("DELETE FROM definition_errors WHERE catalog_id = ?", (r.catalog_id,))
+                continue
             if r.error:
                 r.status = r.status or "invalid"
                 if r.catalog_id in stored:
@@ -393,6 +404,17 @@ async def apply_dir(
     return ApplyReport(files=files, removed=removed)
 
 
+def _editor_owned(stored: dict[str, dict[str, Any]], catalog_id: str) -> bool:
+    return (stored.get(catalog_id) or {}).get("source") == "editor"
+
+
+def _ignore(r: FileResult) -> None:
+    """The catalog is managed in the editor: the file is inert, its content is not even reported."""
+    r.status = "ignored"
+    r.error = None
+    r.definition = None
+
+
 def apply_dir_sync(directory: str | os.PathLike | None = None, **kwargs) -> ApplyReport:
     return asyncio.run(apply_dir(directory, **kwargs))
 
@@ -404,6 +426,9 @@ def report_lines(results: list[FileResult], removed: list[str] = ()) -> list[str
         if r.error:
             lines.append(f"{r.file}: ERROR {r.error}")
         else:
+            if r.status == "ignored":
+                lines.append(f"{r.file}: ignored (catalog {r.catalog_id} is managed in the editor)")
+                continue
             status = r.status or "valid"
             extra = f"; no TMDB match for: {', '.join(r.unresolved)}" if r.unresolved else ""
             lines.append(f"{r.file}: {status} (catalog {r.catalog_id}, rev {r.config_rev[:12]}){extra}")

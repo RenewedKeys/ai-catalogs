@@ -7,6 +7,7 @@ Layout:
       /healthz, /static
       legacy web UI (/configure ...)  only when ENABLE_LEGACY is true
       /ops                            sub-app, no CORS, bearer OPS_TOKEN (404 when unset)
+      /admin                          sub-app, no CORS, editor login (404 unless ENABLE_EDITOR)
       mounted last, at "":
         stremio_app                   CORS: any origin, GET only, no credentials
           curated catalog routes      /c/{token}/...
@@ -18,7 +19,7 @@ inside create_app(), before the final mount.
 
 Only the routes Stremio clients and AIOMetadata fetch cross-origin get CORS headers. Anything
 registered on the parent, and /ops (mounted before the catch-all), is never readable from
-another origin.
+another origin; the same holds for /admin.
 """
 
 import re
@@ -153,6 +154,15 @@ def create_app(enable_legacy: bool | None = None) -> FastAPI:
     from app.api.ops import create_ops_app
 
     app.mount("/ops", create_ops_app())
+
+    # Browser editor: same pattern. With ENABLE_EDITOR off it answers 404 for every path; with it
+    # on, missing or weak secrets stop the service here, at startup.
+    from app.api.admin import check_editor_settings, create_admin_app
+
+    check_editor_settings()
+    admin_app = create_admin_app()
+    app.mount("/admin", admin_app)
+    app.state.admin_app = admin_app
 
     # Mounted last so every parent route above takes precedence.
     app.mount("", stremio_app)
