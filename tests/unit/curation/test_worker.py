@@ -151,7 +151,7 @@ async def test_file_changes_and_sighup_reapply_definitions(catalogs, films):
 
     (catalogs / f"{CID}.yaml").unlink()
     await until(lambda: q("SELECT state FROM catalog_defs")[0]["state"] == "removed", what="removal")
-    assert q("SELECT * FROM schedule") == []
+    await until(lambda: q("SELECT * FROM schedule") == [], what="the schedule row to go")  # same tick, after apply
 
     # SIGHUP path: an edit the signature cannot see (same name, size and mtime) is applied on request.
     (catalogs / "other.yaml").write_text(YAML)
@@ -256,13 +256,17 @@ async def test_lost_lease_stops_claiming_and_reacquires(catalogs, films):
     task = asyncio.create_task(worker.run(install_signals=False))
     await until(lambda: lease()["owner"] == "worker-test-1", what="the lease")
     gen = lease()["generation"]
-    with db.session() as conn:  # another process takes over for a moment
+    with db.session() as conn:  # another process takes over; it holds the lease until we free it
         conn.execute(
-            "UPDATE lease SET owner = 'other', generation = generation + 1, expires_at = ?", (db.now_ms() + 300,)
+            "UPDATE lease SET owner = 'other', generation = generation + 1, expires_at = ?", (db.now_ms() + 600_000,)
         )
         enqueue_job(conn, CID, kind="dry_run")
-    await until(lambda: worker.runner.lost, timeout=5, what="loss detection")
+    await until(lambda: worker.runner.lost or worker.runner.lease is None, what="loss detection")
+    await asyncio.sleep(0.3)  # several ticks while another process holds the lease
     assert not worker.reports  # no claims while lost
+    assert lease()["owner"] == "other"
+    with db.session() as conn:  # the other process goes away
+        conn.execute("UPDATE lease SET expires_at = 0")
     await until(lambda: lease()["owner"] == "worker-test-1" and lease()["generation"] > gen + 1, what="re-acquire")
     await until(lambda: worker.reports, what="the run after re-acquiring")
     await stop(worker, task)
