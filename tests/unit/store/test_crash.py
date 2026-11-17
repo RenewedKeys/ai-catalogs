@@ -36,14 +36,14 @@ def test_sigkill_leaves_the_previous_list_and_a_recoverable_job(_temporary_datab
     path = _temporary_database
     with db.session(path) as conn:
         with db.transaction(conn):
-            rev = accept_definition(conn, "cult_picks", "Cult Picks", {"v": 1})
+            rev = accept_definition(conn, "example", "Example Catalog", {"v": 1})
             publish_snapshot(
                 conn,
-                "cult_picks",
+                "example",
                 [SnapshotItem(f"tt{100 + n}", f"Old {n}", 1999, n + 1) for n in range(10)],
                 config_rev=rev,
             )
-        _, job_id = enqueue_job(conn, "cult_picks")
+        _, job_id = enqueue_job(conn, "example")
         before = counts(conn)
 
     child = subprocess.run(
@@ -54,7 +54,7 @@ def test_sigkill_leaves_the_previous_list_and_a_recoverable_job(_temporary_datab
     with db.session(path) as conn:
         # Nothing of the interrupted commit is visible; the old list is still served.
         assert counts(conn) == before
-        assert [m["id"] for m in active_metas(conn, "cult_picks")][:2] == ["tt100", "tt101"]
+        assert [m["id"] for m in active_metas(conn, "example")][:2] == ["tt100", "tt101"]
         row = conn.execute("SELECT state, claim_gen FROM jobs WHERE id = ?", (job_id,)).fetchone()
         assert row["state"] == "running" and row["claim_gen"] == 1
         assert conn.execute("SELECT status FROM runs").fetchone()[0] == "running"
@@ -76,5 +76,5 @@ def test_sigkill_leaves_the_previous_list_and_a_recoverable_job(_temporary_datab
         assert claim.job_id == job_id and claim.claim_gen == 2
         new = [SnapshotItem(f"tt{200 + n}", f"New {n}", 2005, 1000 + n) for n in range(10)]
         assert commit_run(conn, lease, claim, new) is Outcome.PUBLISHED
-        assert active_metas(conn, "cult_picks")[0]["id"] == "tt200"
+        assert active_metas(conn, "example")[0]["id"] == "tt200"
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"

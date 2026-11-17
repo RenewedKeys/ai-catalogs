@@ -55,9 +55,9 @@ def films(start, count):
     return [SnapshotItem(f"tt{3000000 + n}", f"Film {n}", 2000 + n % 20, 900 + n) for n in range(start, start + count)]
 
 
-def define(conn, catalog_id="cult_picks", definition=None, state="enabled"):
+def define(conn, catalog_id="example", definition=None, state="enabled"):
     with db.transaction(conn):
-        return accept_definition(conn, catalog_id, "Cult Picks", definition or {"v": 1}, state=state)
+        return accept_definition(conn, catalog_id, "Example Catalog", definition or {"v": 1}, state=state)
 
 
 def snapshot_ids(conn):
@@ -110,15 +110,15 @@ def test_release_lets_the_next_process_start_at_once(conn):
 
 def test_one_open_job_per_catalog(conn):
     define(conn)
-    assert enqueue_job(conn, "cult_picks")[0] is Enqueued.QUEUED
-    assert enqueue_job(conn, "cult_picks") == (Enqueued.ALREADY_OPEN, None)
+    assert enqueue_job(conn, "example")[0] is Enqueued.QUEUED
+    assert enqueue_job(conn, "example") == (Enqueued.ALREADY_OPEN, None)
     assert open_jobs(conn) == 1
 
 
 @pytest.mark.parametrize("state", ["disabled", "removed"])
 def test_disabled_or_unknown_catalogs_are_not_queued(conn, state):
     define(conn, state=state)
-    assert enqueue_job(conn, "cult_picks") == (Enqueued.NOT_ENABLED, None)
+    assert enqueue_job(conn, "example") == (Enqueued.NOT_ENABLED, None)
     assert enqueue_job(conn, "never_defined") == (Enqueued.NOT_ENABLED, None)
 
 
@@ -126,14 +126,14 @@ def test_daily_run_limit_is_checked_with_the_insert(conn, clock):
     define(conn)
     lease = acquire_lease(conn, "w")
     for _ in range(2):
-        assert enqueue_job(conn, "cult_picks", max_runs_per_day=2)[0] is Enqueued.QUEUED
+        assert enqueue_job(conn, "example", max_runs_per_day=2)[0] is Enqueued.QUEUED
         commit_run(conn, lease, claim_job(conn, lease), films(0, 3))
-    assert enqueue_job(conn, "cult_picks", max_runs_per_day=2) == (Enqueued.DAILY_LIMIT, None)
-    assert enqueue_job(conn, "cult_picks", kind="dry_run", max_runs_per_day=2)[0] is Enqueued.QUEUED
+    assert enqueue_job(conn, "example", max_runs_per_day=2) == (Enqueued.DAILY_LIMIT, None)
+    assert enqueue_job(conn, "example", kind="dry_run", max_runs_per_day=2)[0] is Enqueued.QUEUED
     renew_lease(conn, lease)
     commit_run(conn, lease, claim_job(conn, lease))  # the dry run does not count toward the limit
     clock.advance_ms(24 * 3600_000 + 1)
-    assert enqueue_job(conn, "cult_picks", max_runs_per_day=2)[0] is Enqueued.QUEUED
+    assert enqueue_job(conn, "example", max_runs_per_day=2)[0] is Enqueued.QUEUED
 
 
 # --- claim and commit -------------------------------------------------------------------
@@ -141,7 +141,7 @@ def test_daily_run_limit_is_checked_with_the_insert(conn, clock):
 
 def test_claim_requires_the_lease(conn, clock):
     define(conn)
-    enqueue_job(conn, "cult_picks")
+    enqueue_job(conn, "example")
     lease = acquire_lease(conn, "w")
     clock.advance_ms(LEASE_TTL_MS + 1)
     with pytest.raises(LostLease):
@@ -151,7 +151,7 @@ def test_claim_requires_the_lease(conn, clock):
 
 def test_happy_path_publishes_and_closes_job_and_run(conn):
     rev = define(conn)
-    _, job_id = enqueue_job(conn, "cult_picks", trigger="schedule")
+    _, job_id = enqueue_job(conn, "example", trigger="schedule")
     lease = acquire_lease(conn, "w")
     claim = claim_job(conn, lease)
     assert (claim.job_id, claim.config_rev, claim.epoch, claim.kind) == (job_id, rev, 0, "refresh")
@@ -159,7 +159,7 @@ def test_happy_path_publishes_and_closes_job_and_run(conn):
     assert claim_job(conn, lease) is None
 
     assert commit_run(conn, lease, claim, films(0, 100)) is Outcome.PUBLISHED
-    assert len(active_metas(conn, "cult_picks")) == 100
+    assert len(active_metas(conn, "example")) == 100
     assert job(conn, job_id)["state"] == "done"
     r = run(conn, claim.run_id)
     assert (r["status"], r["job_id"], r["trigger"]) == ("ok", job_id, "schedule")
@@ -169,11 +169,11 @@ def test_happy_path_publishes_and_closes_job_and_run(conn):
 
 def test_dry_run_mutates_nothing_but_its_run(conn):
     define(conn)
-    enqueue_job(conn, "cult_picks", kind="dry_run")
+    enqueue_job(conn, "example", kind="dry_run")
     lease = acquire_lease(conn, "w")
     claim = claim_job(conn, lease)
     assert commit_run(conn, lease, claim, films(0, 100)) is Outcome.DRY_RUN_OK
-    assert active_metas(conn, "cult_picks") is None
+    assert active_metas(conn, "example") is None
     assert conn.execute("SELECT COUNT(*) FROM history").fetchone()[0] == 0
     assert run(conn, claim.run_id)["dry_run"] == 1 and run(conn, claim.run_id)["status"] == "ok"
 
@@ -184,8 +184,8 @@ def test_config_change_mid_run_supersedes_and_queues_exactly_one_replacement(con
     lease = acquire_lease(conn, "w")
     with db.transaction(conn):
         rev = conn.execute("SELECT config_rev FROM catalog_defs").fetchone()[0]
-        publish_snapshot(conn, "cult_picks", films(0, 10), config_rev=rev)
-    enqueue_job(conn, "cult_picks")
+        publish_snapshot(conn, "example", films(0, 10), config_rev=rev)
+    enqueue_job(conn, "example")
     claim = claim_job(conn, lease)
 
     if change == "revision":
@@ -197,7 +197,7 @@ def test_config_change_mid_run_supersedes_and_queues_exactly_one_replacement(con
         define(conn, definition={"v": 1}, state=change)
 
     assert commit_run(conn, lease, claim, films(100, 10)) is Outcome.SUPERSEDED
-    assert [m["id"] for m in active_metas(conn, "cult_picks")][0] == "tt3000000"  # old list still live
+    assert [m["id"] for m in active_metas(conn, "example")][0] == "tt3000000"  # old list still live
     assert run(conn, claim.run_id)["status"] == "superseded"
     assert job(conn, claim.job_id)["state_detail"] == "superseded"
     pending = conn.execute("SELECT id, not_before FROM jobs WHERE state = 'pending'").fetchall()
@@ -212,7 +212,7 @@ def test_config_change_mid_run_supersedes_and_queues_exactly_one_replacement(con
 
 def test_claim_skips_jobs_of_a_catalog_disabled_while_queued(conn):
     define(conn)
-    enqueue_job(conn, "cult_picks")
+    enqueue_job(conn, "example")
     define(conn, state="disabled")
     lease = acquire_lease(conn, "w")
     assert claim_job(conn, lease) is None
@@ -224,7 +224,7 @@ def test_claim_skips_jobs_of_a_catalog_disabled_while_queued(conn):
 
 def test_a_fenced_out_worker_writes_nothing(conn, clock):
     define(conn)
-    enqueue_job(conn, "cult_picks")
+    enqueue_job(conn, "example")
     old = acquire_lease(conn, "old")
     claim = claim_job(conn, old)
 
@@ -255,7 +255,7 @@ def test_a_fenced_out_worker_writes_nothing(conn, clock):
 def test_a_job_reclaimed_under_the_same_generation_is_fenced_by_claim_gen(conn):
     """Even with a valid lease, a stale Claim object cannot touch a job claimed again since."""
     define(conn)
-    enqueue_job(conn, "cult_picks")
+    enqueue_job(conn, "example")
     lease = acquire_lease(conn, "w")
     first = claim_job(conn, lease)
     finish_cancelled(conn, lease, first)
@@ -271,7 +271,7 @@ def test_a_job_reclaimed_under_the_same_generation_is_fenced_by_claim_gen(conn):
 
 def test_transient_failures_back_off_then_fail(conn, clock):
     define(conn)
-    _, job_id = enqueue_job(conn, "cult_picks")
+    _, job_id = enqueue_job(conn, "example")
     lease = acquire_lease(conn, "w")
     for attempt in range(1, MAX_ATTEMPTS + 1):
         claim = claim_job(conn, lease)
@@ -291,17 +291,17 @@ def test_transient_failures_back_off_then_fail(conn, clock):
 
 def test_non_transient_failure_fails_at_once(conn):
     define(conn)
-    enqueue_job(conn, "cult_picks")
+    enqueue_job(conn, "example")
     lease = acquire_lease(conn, "w")
     claim = claim_job(conn, lease)
     assert finish_failed(conn, lease, claim, error_category="provider_auth", error_status=401) == "failed"
     assert open_jobs(conn) == 0
-    assert enqueue_job(conn, "cult_picks")[0] is Enqueued.QUEUED
+    assert enqueue_job(conn, "example")[0] is Enqueued.QUEUED
 
 
 def test_cancel_returns_the_job_without_penalty(conn):
     define(conn)
-    enqueue_job(conn, "cult_picks")
+    enqueue_job(conn, "example")
     lease = acquire_lease(conn, "w")
     claim = claim_job(conn, lease)
     finish_cancelled(conn, lease, claim)
@@ -312,7 +312,7 @@ def test_cancel_returns_the_job_without_penalty(conn):
 
 def test_stale_heartbeat_is_recovered_by_the_same_generation(conn, clock):
     define(conn)
-    enqueue_job(conn, "cult_picks")
+    enqueue_job(conn, "example")
     lease = acquire_lease(conn, "w")
     claim = claim_job(conn, lease)
     clock.advance_ms(HEARTBEAT_STALE_MS - 1)
@@ -327,7 +327,7 @@ def test_stale_heartbeat_is_recovered_by_the_same_generation(conn, clock):
 
 def test_recovery_frees_the_open_job_index_after_max_attempts(conn, clock):
     define(conn)
-    enqueue_job(conn, "cult_picks")
+    enqueue_job(conn, "example")
     for n in range(MAX_ATTEMPTS):
         clock.advance_ms(LEASE_TTL_MS + RETRY_BACKOFF_MS[-1] + 1)
         lease = acquire_lease(conn, f"w{n}")
@@ -340,4 +340,4 @@ def test_recovery_frees_the_open_job_index_after_max_attempts(conn, clock):
     lease = acquire_lease(conn, "last")
     recover_abandoned(conn, lease)
     assert job(conn, 1)["state"] == "failed"
-    assert enqueue_job(conn, "cult_picks")[0] is Enqueued.QUEUED
+    assert enqueue_job(conn, "example")[0] is Enqueued.QUEUED

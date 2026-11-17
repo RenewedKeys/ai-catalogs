@@ -31,12 +31,12 @@ def conn(_temporary_database):
         yield c
 
 
-def define(conn, catalog_id="cult_picks", definition=None, **kw):
+def define(conn, catalog_id="example", definition=None, **kw):
     with db.transaction(conn):
-        return accept_definition(conn, catalog_id, "Cult Picks", definition or {"v": 1}, **kw)
+        return accept_definition(conn, catalog_id, "Example Catalog", definition or {"v": 1}, **kw)
 
 
-def publish(conn, rev, batch, catalog_id="cult_picks"):
+def publish(conn, rev, batch, catalog_id="example"):
     with db.transaction(conn):
         return publish_snapshot(conn, catalog_id, batch, config_rev=rev)
 
@@ -89,7 +89,7 @@ def test_concurrent_first_start_migrates_exactly_once(tmp_path):
 def test_transaction_rolls_back_on_error(conn):
     with pytest.raises(RuntimeError):
         with db.transaction(conn):
-            accept_definition(conn, "cult_picks", "Cult Picks", {"v": 1})
+            accept_definition(conn, "example", "Example Catalog", {"v": 1})
             raise RuntimeError("boom")
     assert conn.execute("SELECT COUNT(*) FROM catalog_defs").fetchone()[0] == 0
     assert not conn.in_transaction
@@ -97,7 +97,7 @@ def test_transaction_rolls_back_on_error(conn):
 
 def test_writes_require_a_transaction(conn):
     with pytest.raises(RuntimeError):
-        accept_definition(conn, "cult_picks", "Cult Picks", {"v": 1})
+        accept_definition(conn, "example", "Example Catalog", {"v": 1})
 
 
 # --- definitions ------------------------------------------------------------------------
@@ -128,17 +128,17 @@ def test_publish_swaps_the_active_snapshot_and_records_history(conn):
     rev = define(conn)
     first = publish(conn, rev, items(0, 100))
     second = publish(conn, rev, items(100, 60))
-    assert len(active_metas(conn, "cult_picks")) == 60
+    assert len(active_metas(conn, "example")) == 60
     statuses = dict(conn.execute("SELECT id, status FROM snapshots").fetchall())
     assert statuses == {first.snapshot_id: "superseded", second.snapshot_id: "active"}
     assert conn.execute("SELECT COUNT(*) FROM history").fetchone()[0] == 160
-    assert window_activation_ids(conn, "cult_picks", 7) == [second.activation_id, first.activation_id]
+    assert window_activation_ids(conn, "example", 7) == [second.activation_id, first.activation_id]
 
 
 def test_served_metas_are_the_stremio_shape(conn):
     rev = define(conn)
     publish(conn, rev, [SnapshotItem("tt0133093", "The Matrix", 1999, 603, description="Neo.")])
-    assert active_metas(conn, "cult_picks") == [
+    assert active_metas(conn, "example") == [
         {"id": "tt0133093", "type": "movie", "name": "The Matrix", "releaseInfo": "1999", "description": "Neo."}
     ]
 
@@ -159,7 +159,7 @@ def test_invalid_snapshots_are_refused_and_nothing_changes(conn, batch, message)
     publish(conn, rev, items(0, 5))
     with pytest.raises(StoreError, match=message):
         publish(conn, rev, batch)
-    assert len(active_metas(conn, "cult_picks")) == 5
+    assert len(active_metas(conn, "example")) == 5
     assert conn.execute("SELECT COUNT(*) FROM activations").fetchone()[0] == 1
 
 
@@ -168,7 +168,7 @@ def test_publish_refuses_a_stale_revision(conn):
     define(conn, definition={"v": 2})
     with pytest.raises(StoreError, match="revision"):
         publish(conn, old, items(0, 5))
-    assert active_metas(conn, "cult_picks") is None
+    assert active_metas(conn, "example") is None
 
 
 def test_publish_refuses_an_unknown_catalog(conn):
@@ -183,7 +183,7 @@ def test_the_database_enforces_one_active_snapshot(conn):
         with db.transaction(conn):
             conn.execute(
                 "INSERT INTO snapshots (catalog_id, created_at, config_rev, status, item_count, metas_json) "
-                "VALUES ('cult_picks', 0, ?, 'active', 0, '[]')",
+                "VALUES ('example', 0, ?, 'active', 0, '[]')",
                 (rev,),
             )
 
@@ -204,7 +204,7 @@ def test_payloads_are_pruned_but_history_and_activations_are_kept(conn):
 
     # A 14- and a 30-run window are fully backed by history although only 10 payloads remain.
     for window in (14, 30):
-        ids = window_activation_ids(conn, "cult_picks", window)
+        ids = window_activation_ids(conn, "example", window)
         assert len(ids) == window
         placeholders = ",".join("?" * len(ids))
         n = conn.execute(f"SELECT COUNT(*) FROM history WHERE activation_id IN ({placeholders})", ids).fetchone()[0]
@@ -216,7 +216,7 @@ def test_revoked_activations_leave_the_window(conn):
     published = [publish(conn, rev, items(n * 10, 10)) for n in range(5)]
     with db.transaction(conn):
         conn.execute("UPDATE activations SET revoked_at = 1 WHERE id = ?", (published[3].activation_id,))
-    assert window_activation_ids(conn, "cult_picks", 3) == [
+    assert window_activation_ids(conn, "example", 3) == [
         published[4].activation_id,
         published[2].activation_id,
         published[1].activation_id,
