@@ -937,13 +937,16 @@ Under `/admin/...` the editor's inner pages would have had no proxy login at all
   `ENABLE_LEGACY` also owns `/` and `/configure`, so `check_editor_settings()` refuses both on.
 - `EDITOR_AUTH=proxy` (default `password`, unchanged): no login of its own. The session is the
   user name in `EDITOR_PROXY_USER_HEADER` (default `Remote-User`, set by Authelia through Traefik
-  forward-auth, which drops a client-sent copy of that header). No header (or a blank one) -> 403
+  forward-auth, which deletes a client-sent copy of every `authResponseHeaders` header before
+  copying Authelia's: checked in Traefik v3.7 `pkg/middlewares/auth/forward.go`). No header (or a blank one) -> 403
   for every editor path, so the editor fails closed if the proxy rule disappears. `/login` GET
   redirects to the list, `/login` POST and `/logout` answer 404. CSRF tokens are the MAC of
   `proxy:<user>`; the Origin check stays. The MAC key is `SESSION_SECRET` when set (still >= 32
-  bytes), otherwise a random key created once (O_EXCL, mode 0600) as `editor-csrf.key` next to
-  the database, so every uvicorn worker uses the same one. Safe only when the container is
-  reachable through the proxy alone; documented in the README and `.env.example`.
+  bytes), otherwise a random key created once (O_EXCL, mode 0600, 64 hex characters) as
+  `editor-csrf.key` next to the database, so every uvicorn worker uses the same one. Trust
+  boundary: anything that reaches the container without the proxy (a published port, another
+  container on its Docker network) can send the header; documented in the README and
+  `.env.example`.
 - The catalog list shows the addon manifest URL (`PUBLIC_BASE_URL`, else the request's host;
   `ADDON_ACCESS_TOKEN`, else `public`) with a copy button. It is the only editor page with the
   token; the sentinel sweep allows the token on that page alone and checks it is there.

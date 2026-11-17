@@ -12,8 +12,11 @@ startup without them.
 
 ``EDITOR_AUTH=proxy``: no login of its own. The reverse proxy's login (e.g. Authelia behind
 Traefik forward-auth) sets ``EDITOR_PROXY_USER_HEADER`` (default ``Remote-User``); a request
-without it is refused (403), so the editor fails closed if the proxy rule is ever removed. Only
-safe when the container is reachable through that proxy alone. CSRF tokens are then bound to the
+without it is refused (403), so the editor fails closed if the proxy rule is ever removed.
+Traefik's forward-auth deletes a client-sent copy of each ``authResponseHeaders`` header before
+copying the auth server's, so the header cannot be forged through the proxy; anything that can
+reach the container without the proxy (a published port, another container on its Docker
+network) can still send it. CSRF tokens are then bound to the
 user name and signed with ``SESSION_SECRET`` if set, otherwise with a random key kept next to the
 database (``editor-csrf.key``).
 
@@ -63,6 +66,7 @@ SESSION_TTL_S = 12 * 3600
 PRELOGIN_TTL_S = 3600
 MIN_SECRET_BYTES = 32
 MIN_PASSWORD_CHARS = 12
+FILE_KEY_CHARS = 64  # editor-csrf.key: 32 random bytes, hex
 LOGIN_WINDOW_MS = 15 * 60 * 1000
 LOGIN_MAX_PER_CLIENT = 5
 LOGIN_MAX_TOTAL = 20
@@ -147,13 +151,13 @@ def _file_key() -> bytes:
         key = b""
         for _ in range(50):  # another worker may be writing it right now
             key = path.read_bytes().strip()
-            if len(key) >= MIN_SECRET_BYTES:
+            if len(key) == FILE_KEY_CHARS:
                 break
             time.sleep(0.02)
-        if len(key) < MIN_SECRET_BYTES:
+        if len(key) != FILE_KEY_CHARS:
             raise EditorConfigError(f"{path} holds no usable key; delete it to have a new one made") from None
     else:
-        key = secrets.token_hex(32).encode()
+        key = secrets.token_hex(FILE_KEY_CHARS // 2).encode()
         with os.fdopen(fd, "wb") as f:
             f.write(key)
     _FILE_KEYS[str(path)] = key

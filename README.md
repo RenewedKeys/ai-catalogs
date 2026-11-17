@@ -77,9 +77,11 @@ Off by default. Turn it on with `ENABLE_EDITOR=true` and pick how it signs you i
 - **Your reverse proxy's login** (`EDITOR_AUTH=proxy`), e.g. Authelia behind Traefik
   forward-auth: no password of its own. The editor trusts the user name the proxy passes in
   `EDITOR_PROXY_USER_HEADER` (default `Remote-User`, which Authelia sets) and refuses any request
-  without it, so it stays locked if the proxy rule is ever removed. Use this only when the
-  container is reachable through that proxy alone (publish no port), and make sure the proxy
-  requires its login for `/configure` and everything under it. `SESSION_SECRET` is optional here;
+  without it, so it stays locked if the proxy rule is ever removed. Traefik's forward-auth deletes
+  a client-sent copy of that header, so it cannot be forged through the proxy; make sure the
+  proxy requires its login for `/configure` and everything under it, and publish no port. Anything
+  else that can reach the container directly (another container on the same Docker network) is
+  trusted as much as the proxy, because it could send the header itself. `SESSION_SECRET` is optional here;
   without it a random key is kept next to the database (`editor-csrf.key`) for the CSRF tokens.
 
 Then open `https://<your server>/` (it redirects to `/configure/`). `/configure` is the usual
