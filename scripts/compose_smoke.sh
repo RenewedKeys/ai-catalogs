@@ -131,9 +131,12 @@ owner=$(dc exec -T web stat -c %U /data/ai-catalogs.sqlite)
 echo "ok: nothing on the volume is root-owned (CLI via docker exec included)"
 
 # A data directory owned by root (what Docker makes for a missing bind-mount path) is handed
-# to PUID:PGID by the entrypoint on the next start.
-dc exec -T web chown -R 0:0 /data
-dc restart web worker
+# to PUID:PGID by the entrypoint on the next start. Stop first, so the worker releases its
+# lease while it can still write, and change ownership from a one-off root container.
+dc stop
+dc run --rm --no-deps -T --entrypoint chown web -R 0:0 /data
+[ -n "$(dc run --rm --no-deps -T --entrypoint find web /data -user 0)" ] || { echo "chown to root did nothing" >&2; exit 1; }
+dc start
 i=0
 until curl -fsS "http://localhost:$PORT/healthz" >/dev/null 2>&1; do
     i=$((i + 1)); [ "$i" -le 30 ] || { echo "web did not come back" >&2; dc logs >&2; exit 1; }; sleep 1
