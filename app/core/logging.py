@@ -38,6 +38,8 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
 
     # Set specific logger levels
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)  # the openai SDK's HTTP library; logs URLs
+    logging.getLogger("openai").setLevel(logging.WARNING)  # its DEBUG logs include request bodies
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
     return logging.getLogger("stremio_ai_companion")

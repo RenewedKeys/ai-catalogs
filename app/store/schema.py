@@ -159,6 +159,22 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             """,
         ],
     ),
+    (
+        2,
+        [
+            # The structured-output mode that last worked per (base URL, model), so a downgrade
+            # found by one process (worker, CLI, dry run) is not rediscovered at the budget's
+            # expense by the next (PLAN.md section 7). Rows older than 24 h are ignored.
+            """
+            CREATE TABLE llm_modes (
+                key  TEXT PRIMARY KEY,
+                mode TEXT NOT NULL CHECK (mode IN ('json_schema', 'json_object', 'text')),
+                at   INTEGER NOT NULL
+            )
+            """,
+            "CREATE INDEX llm_ledger_by_run ON llm_ledger(run_id)",
+        ],
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]
