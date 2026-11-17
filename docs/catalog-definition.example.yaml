@@ -60,6 +60,13 @@ on_shortfall: fail             # publish_partial: publish at least min_accept it
 max_model_calls_per_run: 8
 max_runs_per_day: 4
 
+# Schedule (optional; without one the catalog only refreshes when asked: CLI or /ops).
+# Five-field cron on the catalog's local wall clock. Refresh a few hours before viewing time:
+# AIOMetadata may serve the previous list for up to its cache TTL.
+schedule:
+  cron: "0 6 * * *"            # minute hour day-of-month month day-of-week: 06:00 daily
+  timezone: "Europe/Berlin"    # IANA zone; default UTC. DST is handled (see README)
+
 # Model (defaults: DEFAULT_MODEL from the environment; temperature not sent):
 # model: google/gemini-3.5-flash-lite
 # temperature: 0.7

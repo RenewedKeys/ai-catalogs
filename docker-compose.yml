@@ -1,6 +1,6 @@
 # Two services from one locally built image:
 #   web     serves HTTP (catalog routes; legacy UI only when ENABLE_LEGACY=true)
-#   worker  runs the scheduler (placeholder until milestone 6; see PLAN.md)
+#   worker  runs the scheduler: schedules, catch-up, recovery, nightly backups (PLAN.md section 11)
 #
 # Secrets come from a .env file next to this file (see .env.example). Never commit it.
 
@@ -29,8 +29,13 @@ services:
     <<: *app
     command: ["python", "-m", "app.worker"]
     healthcheck:
-      # Replaced by a heartbeat check when the real worker lands (milestone 6).
-      disable: true
+      # Healthy while this container's worker holds the lease; its heartbeat renews it every
+      # 20 s (TTL 90 s), also during a run. start_period covers waiting out a previous lease.
+      test: ["CMD", "python", "-m", "app.curation", "status", "--check"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
 
   # Redis is only used by the legacy routes (ENABLE_LEGACY=true). To use it, uncomment this
   # service and set REDIS_HOST=redis in .env. Do not publish its port.

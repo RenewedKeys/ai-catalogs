@@ -8,6 +8,9 @@ Command line: ``python -m app.curation <command>`` (PLAN.md section 10).
     rollback ID SNAPSHOT            make an earlier snapshot the active list again
     history clear ID                make previously shown titles eligible again
     migrate                         create or upgrade the database, print the schema version
+    backup PATH                     online backup of the database to PATH (safe while running)
+    status [--json]                 catalogs, recent runs, schedule, budget, worker heartbeat
+    status --check                  exit 0 if this host's worker holds the lease (health check)
     load-fixture PATH [--limit N]   publish a fixture file as a catalog's active snapshot
                                     [--id ID] [--name NAME]
 
@@ -37,7 +40,9 @@ from app.curation.budget import BudgetLimits
 from app.curation.definitions import LoaderError, apply_dir, report_lines, validate_dir
 from app.curation.runner import Runner, Services
 from app.store.catalogs import SnapshotItem, StoreError, accept_definition, publish_snapshot
-from app.store.db import database_path, schema_version, session, transaction
+from app.curation.status import collect_status, text_lines, worker_healthy
+from app.store.backup import backup_database
+from app.store.db import database_path, now_ms, schema_version, session, transaction
 from app.store.jobs import Enqueued, enqueue_job
 from app.store.maintenance import MaintenanceError, history_clear, rollback
 
@@ -74,6 +79,33 @@ def _load_fixture(args: argparse.Namespace) -> int:
 def _migrate(args: argparse.Namespace) -> int:
     with session() as conn:
         print(f"{database_path()}: schema version {schema_version(conn)}")
+    return 0
+
+
+def _backup(args: argparse.Namespace) -> int:
+    with session():
+        pass  # create / migrate first, so the backup is of a current schema
+    path = backup_database(args.path)
+    print(f"backup written to {path}")
+    return 0
+
+
+def _status(args: argparse.Namespace) -> int:
+    if args.check:
+        if not os.path.exists(database_path()):
+            print("unhealthy: no database yet", file=sys.stderr)
+            return 1
+        with session() as conn:
+            ok, message = worker_healthy(conn, now_ms())
+        print(("healthy: " if ok else "unhealthy: ") + message, file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
+    with session() as conn:
+        status = collect_status(conn, now_ms())
+    if args.json:
+        print(json.dumps(status, indent=2))
+    else:
+        for line in text_lines(status):
+            print(line)
     return 0
 
 
@@ -250,6 +282,15 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("migrate", help="create or upgrade the database").set_defaults(func=_migrate)
+
+    p = sub.add_parser("backup", help="online backup of the database (safe while the services run)")
+    p.add_argument("path", help="destination file, e.g. /data/backups/manual.sqlite")
+    p.set_defaults(func=_backup)
+
+    p = sub.add_parser("status", help="catalogs, recent runs, schedule, budget and worker heartbeat")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+    p.add_argument("--check", action="store_true", help="exit 0 if this host's worker holds the lease")
+    p.set_defaults(func=_status)
 
     p = sub.add_parser("validate", help="check catalog definition files; writes nothing")
     p.add_argument("--dir", help=f"definitions directory (default: {settings.CATALOGS_DIR})")

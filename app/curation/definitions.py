@@ -39,6 +39,7 @@ from app.curation.exclusions import ExclusionInputs, ResolvedExclusions, exclusi
 from app.curation.limits import limits_from_definition
 from app.curation.llm import LLMSettings
 from app.curation.prompt import PromptError, validate_definition_prompt
+from app.curation.schedule import parse_schedule
 from app.curation.tmdb_gate import TMDBClient, TMDBError
 from app.store import db
 from app.store.catalogs import CATALOG_ID_RE, MAX_ITEMS, accept_definition, config_rev_of
@@ -110,7 +111,7 @@ class CatalogDefinition(BaseModel):
     min_accept: int | None = Field(default=None, ge=1, le=MAX_ITEMS)
     max_model_calls_per_run: Any = None
     max_runs_per_day: Any = None
-    schedule: dict[str, Any] | None = None  # cron + timezone; used by the worker (milestone 6)
+    schedule: dict[str, Any] | None = None  # cron + timezone (app.curation.schedule validates it)
 
     @model_validator(mode="after")
     def _consistent(self):
@@ -165,6 +166,7 @@ def validate_definition(raw: Any) -> tuple[dict[str, Any], CatalogDefinition, Ex
         limits_from_definition(canonical)
         LLMSettings.from_definition(canonical)
         BudgetLimits.from_definition(canonical)
+        parse_schedule(canonical.get("schedule"))
     except ValidationError as e:
         raise DefinitionError(_format_validation_error(e)) from None
     except ValueError as e:

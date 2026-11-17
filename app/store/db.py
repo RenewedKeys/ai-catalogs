@@ -90,8 +90,16 @@ def migrate(conn: sqlite3.Connection) -> int:
     else:
         raise RuntimeError("could not enable WAL journal mode")
 
-    if schema_version(conn) >= LATEST_VERSION:
-        return schema_version(conn)
+    current = schema_version(conn)
+    if current >= LATEST_VERSION:
+        return current
+    if current > 0:
+        # Upgrading a database that holds data: back it up first (PLAN.md section 12). A
+        # failed backup stops the upgrade. Racing processes may each take one (unique names).
+        from app.store.backup import PRE_MIGRATION, take_automatic
+
+        path = conn.execute("PRAGMA database_list").fetchone()["file"]
+        take_automatic(f"{PRE_MIGRATION}-v{current}", conn, now_ms(), path or None)
 
     with transaction(conn):
         conn.execute(
