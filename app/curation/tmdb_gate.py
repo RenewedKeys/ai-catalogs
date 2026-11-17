@@ -63,6 +63,7 @@ BACKOFF_S = (0.5, 1.0, 2.0)
 MAX_RETRY_AFTER_S = 30.0
 
 IMDB_ID_RE = re.compile(r"^tt\d+$")
+V3_API_KEY_RE = re.compile(r"^[0-9a-f]{32}$")
 _TRAILING_YEAR_RE = re.compile(r"\s*\((\d{4})\)\s*$")
 
 
@@ -127,15 +128,19 @@ class FranchiseDenylist:
 
 @dataclass(frozen=True)
 class GateRules:
-    """Hard filters (PLAN.md section 8). Defaults are the seed catalog's values."""
+    """
+    Hard filters (PLAN.md section 8), set per catalog. Defaults are neutral: every cutoff
+    is off, so a catalog only filters on what its definition asks for. Always enforced,
+    because the addon cannot serve the film otherwise: released, not adult, valid IMDb id.
+    """
 
-    min_runtime: int = 70
-    min_vote_average: float = 6.2
-    min_vote_count: int = 1000
-    languages: frozenset[str] = frozenset({"en"})
-    excluded_genre_ids: frozenset[int] = frozenset({16, 10770, 10751, 99})
-    year_min: int | None = 1980
-    year_max: int | None = None  # None = the current year
+    min_runtime: int = 0  # 0 = off; when set, a missing runtime also rejects
+    min_vote_average: float = 0.0
+    min_vote_count: int = 0
+    languages: frozenset[str] = frozenset()  # original_language allow-list; empty = any
+    excluded_genre_ids: frozenset[int] = frozenset()
+    year_min: int | None = None
+    year_max: int | None = None  # None = no upper bound beyond "released"
     blacklist_tmdb_ids: frozenset[int] = frozenset()
     franchise_denylist: FranchiseDenylist = field(default_factory=FranchiseDenylist)
     include_credits: bool = False  # director cap needs credits (one more cached call)
@@ -304,17 +309,18 @@ def evaluate(details: dict, rules: GateRules, today: date | None = None) -> list
     tmdb_id = details.get("id")
 
     runtime = details.get("runtime")
-    if not isinstance(runtime, int) or runtime <= 0:
-        reasons.append(Reason.RUNTIME_MISSING)
-    elif runtime < rules.min_runtime:
-        reasons.append(Reason.RUNTIME_SHORT)
+    if rules.min_runtime > 0:
+        if not isinstance(runtime, int) or runtime <= 0:
+            reasons.append(Reason.RUNTIME_MISSING)
+        elif runtime < rules.min_runtime:
+            reasons.append(Reason.RUNTIME_SHORT)
 
     if float(details.get("vote_average") or 0) < rules.min_vote_average:
         reasons.append(Reason.RATING_LOW)
     if int(details.get("vote_count") or 0) < rules.min_vote_count:
         reasons.append(Reason.VOTES_LOW)
 
-    if details.get("original_language") not in rules.languages:
+    if rules.languages and details.get("original_language") not in rules.languages:
         reasons.append(Reason.LANGUAGE)
 
     genre_ids = {g.get("id") for g in details.get("genres") or [] if isinstance(g, dict)}
@@ -440,12 +446,22 @@ class TMDBClient:
         timeout_s: float = DEFAULT_TIMEOUT_S,
         base_url: str = TMDB_BASE_URL,
     ):
-        token = token or settings.TMDB_READ_ACCESS_TOKEN
+        token = (token or settings.TMDB_READ_ACCESS_TOKEN or "").strip()
         if not token:
             raise TMDBError("provider_auth")
+        headers = {"accept": "application/json"}
+        params: dict[str, str] = {}
+        if V3_API_KEY_RE.match(token):
+            # A v3 "API Key" only works as a query parameter. The request URL then carries
+            # the key, so it must never be logged: describe_error() never includes URLs and
+            # the httpx logger is kept at WARNING (app.core.logging).
+            params["api_key"] = token
+        else:
+            headers["Authorization"] = f"Bearer {token}"  # v4 "API Read Access Token"
         self._client = httpx.AsyncClient(
             base_url=base_url,
-            headers={"accept": "application/json", "Authorization": f"Bearer {token}"},
+            headers=headers,
+            params=params,
             timeout=timeout_s,
             transport=transport,
         )

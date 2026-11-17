@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import dataclasses
 import logging
 from datetime import date
 
@@ -26,6 +27,16 @@ from app.store import db
 from tests.unit.curation.tmdb_fake import FakeTMDB, load_movies
 
 TOKEN = "test-token-SENTINEL-7f3a"
+
+# One catalog's cutoffs (the PLAN.md example). Nothing in the gate defaults to these.
+EXAMPLE = GateRules(
+    min_runtime=70,
+    min_vote_average=6.2,
+    min_vote_count=1000,
+    languages={"en"},
+    excluded_genre_ids={16, 10770, 10751, 99},
+    year_min=1980,
+)
 T0 = 1_800_000_000.0
 DAY = 24 * 60 * 60
 
@@ -65,7 +76,7 @@ async def make_gate(fake, sleeps, clock):
     def factory(rules=None, concurrency=8):
         client = TMDBClient(TOKEN, transport=fake.transport, sleep=record_sleep, concurrency=concurrency)
         clients.append(client)
-        return TMDBGate(rules or GateRules(), client=client)
+        return TMDBGate(rules or EXAMPLE, client=client)
 
     yield factory
     for c in clients:
@@ -221,7 +232,7 @@ class TestCheck:
         assert isinstance(result, Candidate) and result.collection_id == 8945
 
     async def test_credits_give_director_ids(self, make_gate, fake):
-        result = await make_gate(GateRules(include_credits=True)).check("Total Recall", 1990)
+        result = await make_gate(dataclasses.replace(EXAMPLE, include_credits=True)).check("Total Recall", 1990)
         assert result.director_ids == (10491,)
         assert fake.requests[-1].url.params["append_to_response"] == "external_ids,keywords,credits"
 
@@ -267,7 +278,7 @@ TODAY = date(2026, 11, 16)
 def reasons_for(mutate, rules=None):
     d = base_details()
     mutate(d)
-    return evaluate(d, rules or GateRules(), today=TODAY)
+    return evaluate(d, rules or EXAMPLE, today=TODAY)
 
 
 class TestGatekeeper:
@@ -311,28 +322,30 @@ class TestGatekeeper:
         assert reasons_for(lambda d: d.update(release_date="2026-03-01")) == []
 
     def test_blacklist(self):
-        assert reasons_for(lambda d: None, GateRules(blacklist_tmdb_ids={861})) == [Reason.BLACKLISTED]
+        assert reasons_for(lambda d: None, dataclasses.replace(EXAMPLE, blacklist_tmdb_ids={861})) == [
+            Reason.BLACKLISTED
+        ]
 
     def test_franchise_collection(self):
         def coll(d):
             d["belongs_to_collection"] = {"id": 8945, "name": "Mad Max Collection"}
 
-        rules = GateRules(franchise_denylist=FranchiseDenylist(collection_ids={8945}))
+        rules = dataclasses.replace(EXAMPLE, franchise_denylist=FranchiseDenylist(collection_ids={8945}))
         assert reasons_for(coll, rules) == [Reason.FRANCHISE_COLLECTION]
         assert reasons_for(lambda d: None, rules) == []  # null collection is fine
 
     def test_franchise_company(self):
-        rules = GateRules(franchise_denylist=FranchiseDenylist(company_ids={420}))
+        rules = dataclasses.replace(EXAMPLE, franchise_denylist=FranchiseDenylist(company_ids={420}))
         assert reasons_for(lambda d: d["production_companies"].append({"id": 420}), rules) == [Reason.FRANCHISE_COMPANY]
 
     def test_franchise_keyword(self):
-        rules = GateRules(franchise_denylist=FranchiseDenylist(keyword_ids={180547}))
+        rules = dataclasses.replace(EXAMPLE, franchise_denylist=FranchiseDenylist(keyword_ids={180547}))
         assert reasons_for(lambda d: d["keywords"]["keywords"].append({"id": 180547}), rules) == [
             Reason.FRANCHISE_KEYWORD
         ]
 
     def test_franchise_title_regex_on_title_and_original_title(self):
-        rules = GateRules(franchise_denylist=FranchiseDenylist(title_patterns=[r"\bstar\s+wars\b"]))
+        rules = dataclasses.replace(EXAMPLE, franchise_denylist=FranchiseDenylist(title_patterns=[r"\bstar\s+wars\b"]))
         assert reasons_for(lambda d: d.update(title="Star Wars: A New Hope"), rules) == [Reason.FRANCHISE_TITLE]
         assert reasons_for(lambda d: d.update(original_title="STAR WARS"), rules) == [Reason.FRANCHISE_TITLE]
         assert reasons_for(lambda d: None, rules) == []
@@ -364,6 +377,19 @@ class TestGatekeeper:
             d.update(runtime=50, original_language="ja", adult=True)
 
         assert reasons_for(many) == [Reason.RUNTIME_SHORT, Reason.LANGUAGE, Reason.ADULT]
+
+    def test_defaults_are_neutral(self):
+        # A catalog that sets no cutoffs gets every released, non-adult film with an IMDb id.
+        def anything(d):
+            d.update(runtime=None, vote_average=1.0, vote_count=3, original_language="ko", release_date="1931-02-12")
+            d["genres"] = [{"id": 16}, {"id": 99}]
+
+        assert reasons_for(anything, GateRules()) == []
+        assert reasons_for(lambda d: d.update(adult=True), GateRules()) == [Reason.ADULT]
+        assert reasons_for(lambda d: d.update(status="Planned"), GateRules()) == [Reason.NOT_RELEASED]
+        assert reasons_for(lambda d: d.update(imdb_id=None, external_ids={"imdb_id": ""}), GateRules()) == [
+            Reason.IMDB_ID_MISSING
+        ]
 
     def test_reason_codes_are_stable_strings(self):
         assert Reason.NO_MATCH.value == "no_match"
@@ -421,7 +447,7 @@ class TestCache:
 
     async def test_credits_and_base_details_are_cached_separately(self, make_gate, fake):
         await make_gate().check("Total Recall", 1990)
-        result = await make_gate(GateRules(include_credits=True)).check("Total Recall", 1990)
+        result = await make_gate(dataclasses.replace(EXAMPLE, include_credits=True)).check("Total Recall", 1990)
         assert result.director_ids == (10491,)
         assert fake.detail_calls() == [861, 861]
         with db.session() as conn:
@@ -539,3 +565,33 @@ class TestRetries:
         text = caplog.text + str(e.value) + repr(e.value)
         assert "SECRET-PROVIDER-TEXT" not in text and TOKEN not in text and "api.themoviedb.org" not in text
         assert "TMDBError (HTTP 503)" in caplog.text
+
+
+class TestAuthModes:
+    async def test_v3_api_key_goes_in_query_not_header(self, fake):
+        key = "0123456789abcdef0123456789abcdef"
+        async with TMDBClient(key, transport=fake.transport) as client:
+            await client.get("/search/movie", {"query": "Total Recall", "primary_release_year": "1990"})
+        request = fake.requests[0]
+        assert request.url.params["api_key"] == key and request.url.params["query"] == "Total Recall"
+        assert "Authorization" not in request.headers
+
+    async def test_read_access_token_goes_in_header_not_query(self, fake):
+        async with TMDBClient("eyJhbGciOiJIUzI1NiJ9.x.y", transport=fake.transport) as client:
+            await client.get("/movie/861")
+        request = fake.requests[0]
+        assert request.headers["Authorization"] == "Bearer eyJhbGciOiJIUzI1NiJ9.x.y"
+        assert "api_key" not in request.url.params
+
+    async def test_v3_key_never_logged_on_failure(self, fake, caplog):
+        key = "fedcba9876543210fedcba9876543210"
+        fake.script = [httpx.ReadTimeout("t")] * g.MAX_ATTEMPTS
+
+        async def no_sleep(_):
+            return None
+
+        with caplog.at_level(logging.DEBUG):
+            async with TMDBClient(key, transport=fake.transport, sleep=no_sleep) as client:
+                with pytest.raises(TMDBError) as e:
+                    await client.get("/movie/861")
+        assert key not in caplog.text and key not in str(e.value)

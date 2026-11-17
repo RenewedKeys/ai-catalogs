@@ -1,0 +1,92 @@
+# Example exclusion list for one catalog (the "daily cult picks" example in PLAN.md
+# section 6). Any catalog can have its own; resolve it with
+#   python scripts/resolve_blacklist.py docs/examples/cult-picks-exclusions.txt
+# Add a year, "Title (YYYY)", to exclude only that version of a remade title.
+
+[titles]
+# Overused defaults
+Upgrade
+Dredd
+The Thing
+Total Recall
+Demolition Man
+Pitch Black
+Edge of Tomorrow
+Big Trouble in Little China
+They Live
+Escape from New York
+Escape from L.A.
+# Overused action / sci-fi
+Face/Off
+The Rock
+Broken Arrow
+Overlord
+Pandorum
+Equilibrium
+Lockout
+Deep Rising
+Dog Soldiers
+Slither
+Galaxy Quest
+Reign of Fire
+The Running Man
+Last Action Hero
+# B-movie filler
+Hardware
+Cyborg
+Nemesis
+Split Second
+Fortress
+Leviathan
+DeepStar Six
+Virus
+Scanner Cop
+Project Shadowchaser
+Eliminators
+Steel Dawn
+Hell Comes to Frogtown
+Robot Jox
+
+[franchises]
+Avengers
+Iron Man
+Captain America
+Thor
+Guardians of the Galaxy
+X-Men
+Spider-Man
+Batman
+Superman
+Wonder Woman
+Justice League
+The Dark Knight
+Star Wars
+Star Trek
+Fast & Furious
+The Fast and the Furious
+Jurassic Park
+Jurassic World
+Transformers
+Alien
+Terminator
+Mission: Impossible
+John Wick
+Mad Max
+
+[companies]
+Marvel Studios
+DC Films
+DC Studios
+Lucasfilm
+
+[keywords]
+marvel cinematic universe
+dc extended universe
+
+[title_patterns]
+\bstar wars\b
+\bstar trek\b
+\bjurassic (park|world)\b
+\bmission:? impossible\b
+\bjohn wick\b
+\bmad max\b
