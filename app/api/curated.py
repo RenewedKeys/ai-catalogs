@@ -2,8 +2,12 @@
 Curated catalog routes, read by AIOMetadata (PLAN.md section 9).
 
     GET /c/{token}/manifest.json
-    GET /c/{token}/catalog/movie/{catalog_id}.json          the whole active snapshot
-    GET /c/{token}/catalog/movie/{catalog_id}/{extra}.json  extra = "skip=N[&genre=G]"
+    GET /c/{token}/catalog/{type}/{catalog_id}.json          the whole active snapshot
+    GET /c/{token}/catalog/{type}/{catalog_id}/{extra}.json  extra = "skip=N[&genre=G]"
+
+``type`` is ``movie`` or ``series``: the type of the catalog's active snapshot (PLAN.md section
+29). A catalog switched from movies to shows keeps serving its last movie list as movies until
+its first show list is published; any other type is a 404.
 
 Single-response contract: offset 0 returns the entire active snapshot and any ``skip > 0``
 returns ``{"metas": []}``. AIOMetadata advances its upstream offset by the number of items
@@ -21,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.store.catalogs import CATALOG_ID_RE, active_metas, catalog_state, servable_catalogs
+from app.store.catalogs import CATALOG_ID_RE, MEDIA_TYPES, active_metas, catalog_state, servable_catalogs
 from app.store.db import session
 
 router = APIRouter(tags=["Curated catalogs"])
@@ -44,9 +48,9 @@ def _manifest(catalogs) -> dict:
         "name": settings.CURATED_ADDON_NAME,
         "description": settings.APP_DESCRIPTION,
         "resources": ["catalog"],
-        "types": ["movie"],
+        "types": [t for t in MEDIA_TYPES if any(c.media_type == t for c in catalogs)] or ["movie"],
         "idPrefixes": ["tt"],
-        "catalogs": [{"type": "movie", "id": c.catalog_id, "name": c.name} for c in catalogs],
+        "catalogs": [{"type": c.media_type, "id": c.catalog_id, "name": c.name} for c in catalogs],
         "behaviorHints": {"configurable": False, "configurationRequired": False},
     }
     if settings.PUBLIC_BASE_URL:
@@ -75,13 +79,15 @@ def _parse_skip(extra: str) -> int:
     return int(raw)
 
 
-def _catalog_response(catalog_id: str, skip: int) -> JSONResponse:
-    if not CATALOG_ID_RE.fullmatch(catalog_id):
+def _catalog_response(media_type: str, catalog_id: str, skip: int) -> JSONResponse:
+    if media_type not in MEDIA_TYPES or not CATALOG_ID_RE.fullmatch(catalog_id):
         raise HTTPException(status_code=404, detail="Unknown catalog")
     with session() as conn:
         if catalog_state(conn, catalog_id) != "enabled":
             raise HTTPException(status_code=404, detail="Unknown catalog")
         metas = active_metas(conn, catalog_id)
+        if metas is not None and active_metas(conn, catalog_id, media_type) is None:
+            raise HTTPException(status_code=404, detail="Unknown catalog")  # served as the other type
     if metas is None:
         # Not listed in the manifest until its first snapshot exists, so this only happens when
         # it was imported earlier and the state was then lost. AIOMetadata turns any error into
@@ -92,13 +98,15 @@ def _catalog_response(catalog_id: str, skip: int) -> JSONResponse:
     return JSONResponse({"metas": metas}, headers=NO_STORE)
 
 
-@router.get("/c/{token}/catalog/movie/{catalog_id}.json")
-def curated_catalog(token: str = Path(...), catalog_id: str = Path(...)):
+@router.get("/c/{token}/catalog/{media_type}/{catalog_id}.json")
+def curated_catalog(token: str = Path(...), media_type: str = Path(...), catalog_id: str = Path(...)):
     _check_token(token)
-    return _catalog_response(catalog_id, 0)
+    return _catalog_response(media_type, catalog_id, 0)
 
 
-@router.get("/c/{token}/catalog/movie/{catalog_id}/{extra}.json")
-def curated_catalog_extra(token: str = Path(...), catalog_id: str = Path(...), extra: str = Path(...)):
+@router.get("/c/{token}/catalog/{media_type}/{catalog_id}/{extra}.json")
+def curated_catalog_extra(
+    token: str = Path(...), media_type: str = Path(...), catalog_id: str = Path(...), extra: str = Path(...)
+):
     _check_token(token)
-    return _catalog_response(catalog_id, _parse_skip(extra))
+    return _catalog_response(media_type, catalog_id, _parse_skip(extra))

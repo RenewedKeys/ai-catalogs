@@ -18,8 +18,8 @@ movie against TMDB, drops anything that breaks your rules, and refreshes it on y
 new picks, so nothing you saw recently comes back too soon.
 
 Catalogs are served through [AIOMetadata](https://github.com/cedya77/aiometadata), so they show
-up in Stremio and the other apps AIOMetadata works with, like any other catalog. Movies today;
-TV shows are planned.
+up in Stremio and the other apps AIOMetadata works with, like any other catalog. Each
+catalog is either movies or TV shows: one toggle at the top of the catalog.
 
 ## All your catalogs in one place
 

@@ -39,6 +39,7 @@ def _get_paths(app, blob: str = "x") -> list[str]:
     """Every GET route of the app and its mounted sub-apps, with path parameters filled in."""
     fill = {
         "content_type": "movie",
+        "media_type": "movie",
         "catalog_id": "trending_movie",
         "token": SENTINELS["ADDON_ACCESS_TOKEN"],
         "extra": "skip=0",

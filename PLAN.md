@@ -1085,7 +1085,7 @@ Owner feedback on the section 26 editor, all in one change:
   `OPENAI_BASE_URL` becomes Google's OpenAI-compatible endpoint and `DEFAULT_MODEL` drops its
   `google/` prefix. Same code path otherwise; the model picker strips Google's `models/` prefix.
 
-## 29. TV shows (design, awaiting approval)
+## 29. TV shows (design, approved)
 
 Each catalog is either movies or shows, picked with a **Movies / Shows** toggle at the top of the
 catalog form. One catalog never mixes the two (Stremio catalogs have one type, and AIOMetadata
@@ -1203,3 +1203,19 @@ suggest). Placeholders only ("Show 1", category "alpha").
 
 Minor version: `__version__` 1.1.0, tag `v1.1.0` after merge. README: replace "TV shows are
 planned" with a short line; `docs/setup.md` gets the `type` key and the re-import note.
+
+## 30. TV shows: status
+
+Built as designed in section 29 (`app/curation/media.py` holds the type, genre lists and wording),
+released as 1.1.0. Differences from the design:
+
+- **Watched filter not for shows yet.** MDBList's `/sync/watched` show payload is not publicly
+  documented and could not be checked without a key, so `exclude_watched` is refused for series
+  (listed in `media.MOVIE_ONLY_KEYS`, hidden by the toggle) rather than guessed.
+- **AIOMetadata's catalog URL is confirmed**: it builds `/catalog/{type}/{id}.json` from the
+  imported manifest (`configure/src/utils/catalogUtils.ts`, already recorded in
+  `tests/unit/api/test_curated.py`), and its `stremthru.js` passes each meta's own `type` on. The
+  series contract test replays that loop.
+- **Switching genres** keeps the genre ids both lists share (e.g. Comedy, Drama) and drops the
+  rest, instead of clearing them all.
+- `scripts/resolve_blacklist.py` still inspects movie titles only.

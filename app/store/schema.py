@@ -241,6 +241,15 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "ALTER TABLE runs ADD COLUMN preview_json TEXT",
         ],
     ),
+    (
+        7,
+        [
+            # The type a list was built for (PLAN.md section 29): movie | series. It is what the
+            # list is served as, and the history window only counts lists of the catalog's
+            # current type. Every list before this migration is a movie list.
+            "ALTER TABLE snapshots ADD COLUMN media_type TEXT NOT NULL DEFAULT 'movie'",
+        ],
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

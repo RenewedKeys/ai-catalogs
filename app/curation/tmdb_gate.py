@@ -11,7 +11,9 @@ TMDB resolver and gatekeeper for curated catalogs (PLAN.md section 8).
    scorers would accept "Modern Times" for "Modern"), **and** its release year is within
    +/- 1 of the suggested year. Among acceptable candidates the highest ``vote_count``
    wins. Never ``results[0]``.
-2. **Gatekeep** on the movie details (``evaluate()``, a pure function): runtime, rating,
+   Series catalogs (``GateRules.media_type == "series"``, PLAN.md section 29) search
+   ``/search/tv`` with ``first_air_date_year`` and read ``name`` / ``first_air_date``.
+2. **Gatekeep** on the movie (or TV) details (``evaluate()``, a pure function): runtime, rating,
    votes, language, genres, year range, adult, status, IMDb id, blacklist, franchise
    denylist. Thresholds are a ``GateRules`` value; milestone 5 builds it from catalog YAML.
 
@@ -144,6 +146,7 @@ class GateRules:
     blacklist_tmdb_ids: frozenset[int] = frozenset()
     franchise_denylist: FranchiseDenylist = field(default_factory=FranchiseDenylist)
     include_credits: bool = False  # director cap needs credits (one more cached call)
+    media_type: str = "movie"  # movie | series (PLAN.md section 29): which TMDB endpoints and fields
 
     def __post_init__(self):
         object.__setattr__(self, "languages", frozenset(self.languages))
@@ -260,7 +263,7 @@ def search_plan(year: int | None) -> list[list[int | None]]:
     return [[year], [year - 1, year + 1], [None]]
 
 
-def _hits(payload: dict) -> list[SearchHit]:
+def _hits(payload: dict, series: bool = False) -> list[SearchHit]:
     hits = []
     for r in payload.get("results") or []:
         if not isinstance(r, dict) or not isinstance(r.get("id"), int):
@@ -268,9 +271,9 @@ def _hits(payload: dict) -> list[SearchHit]:
         hits.append(
             SearchHit(
                 tmdb_id=r["id"],
-                title=r.get("title") or "",
-                original_title=r.get("original_title"),
-                year=parse_year(r.get("release_date")),
+                title=r.get("name" if series else "title") or "",
+                original_title=r.get("original_name" if series else "original_title"),
+                year=parse_year(r.get("first_air_date" if series else "release_date")),
                 vote_count=int(r.get("vote_count") or 0),
             )
         )
@@ -281,9 +284,12 @@ def _hits(payload: dict) -> list[SearchHit]:
 
 
 def _keyword_ids(details: dict) -> set[int]:
-    # Movie details nest keywords as {"keywords": {"keywords": [{"id", "name"}]}}.
+    # Movie details nest keywords as {"keywords": {"keywords": [...]}}, TV as {"keywords": {"results": [...]}}.
     block = details.get("keywords") or {}
-    items = block.get("keywords") if isinstance(block, dict) else block
+    if isinstance(block, dict):
+        items = block.get("keywords") if "keywords" in block else block.get("results")
+    else:
+        items = block
     return {k["id"] for k in items or [] if isinstance(k, dict) and isinstance(k.get("id"), int)}
 
 
@@ -303,13 +309,35 @@ def _director_ids(details: dict) -> tuple[int, ...] | None:
     )
 
 
+# TV ``status`` values meaning "has not aired yet". TMDB documents no enum, so the known
+# not-yet-aired values are refused rather than allowing a list a new value would break.
+TV_UNAIRED_STATUSES = frozenset({"Planned", "In Production", "Pilot"})
+
+
+def _is_series(rules: GateRules) -> bool:
+    return rules.media_type == "series"
+
+
+def details_title(details: dict, series: bool) -> tuple[str, str | None]:
+    """(title, original title) of movie or TV details."""
+    if series:
+        return details.get("name") or "", details.get("original_name")
+    return details.get("title") or "", details.get("original_title")
+
+
+def details_year(details: dict, series: bool) -> int | None:
+    return parse_year(details.get("first_air_date" if series else "release_date"))
+
+
 def evaluate(details: dict, rules: GateRules, today: date | None = None) -> list[Reason]:
     """Every hard rule ``details`` fails, in a fixed order. Empty means accepted."""
     reasons: list[Reason] = []
     tmdb_id = details.get("id")
+    series = _is_series(rules)
+    today = today or date.today()
 
     runtime = details.get("runtime")
-    if rules.min_runtime > 0:
+    if rules.min_runtime > 0 and not series:
         if not isinstance(runtime, int) or runtime <= 0:
             reasons.append(Reason.RUNTIME_MISSING)
         elif runtime < rules.min_runtime:
@@ -327,8 +355,8 @@ def evaluate(details: dict, rules: GateRules, today: date | None = None) -> list
     if genre_ids & rules.excluded_genre_ids:
         reasons.append(Reason.GENRE_EXCLUDED)
 
-    year = parse_year(details.get("release_date"))
-    year_max = rules.year_max if rules.year_max is not None else (today or date.today()).year
+    year = details_year(details, series)
+    year_max = rules.year_max if rules.year_max is not None else today.year
     if year is None:
         reasons.append(Reason.YEAR_MISSING)
     elif (rules.year_min is not None and year < rules.year_min) or year > year_max:
@@ -336,7 +364,12 @@ def evaluate(details: dict, rules: GateRules, today: date | None = None) -> list
 
     if details.get("adult") is not False:
         reasons.append(Reason.ADULT)
-    if details.get("status") != "Released":
+    if series:
+        first_air = details.get("first_air_date")
+        aired = isinstance(first_air, str) and len(first_air) >= 10 and first_air[:10] <= today.isoformat()
+        if not aired or details.get("status") in TV_UNAIRED_STATUSES:
+            reasons.append(Reason.NOT_RELEASED)
+    elif details.get("status") != "Released":
         reasons.append(Reason.NOT_RELEASED)
     if _imdb_id(details) is None:
         reasons.append(Reason.IMDB_ID_MISSING)
@@ -352,19 +385,20 @@ def evaluate(details: dict, rules: GateRules, today: date | None = None) -> list
         reasons.append(Reason.FRANCHISE_COMPANY)
     if _keyword_ids(details) & deny.keyword_ids:
         reasons.append(Reason.FRANCHISE_KEYWORD)
-    if deny.title_matches(details.get("title"), details.get("original_title")):
+    if deny.title_matches(*details_title(details, series)):
         reasons.append(Reason.FRANCHISE_TITLE)
     return reasons
 
 
-def to_candidate(details: dict) -> Candidate:
+def to_candidate(details: dict, series: bool = False) -> Candidate:
     collection = details.get("belongs_to_collection")
+    title, original_title = details_title(details, series)
     return Candidate(
         tmdb_id=details["id"],
         imdb_id=_imdb_id(details) or "",
-        title=details.get("title") or "",
-        original_title=details.get("original_title"),
-        year=parse_year(details.get("release_date")) or 0,
+        title=title,
+        original_title=original_title,
+        year=details_year(details, series) or 0,
         runtime=int(details.get("runtime") or 0),
         vote_average=float(details.get("vote_average") or 0),
         vote_count=int(details.get("vote_count") or 0),
@@ -407,12 +441,13 @@ class TMDBCache:
 _NO_MATCH = "no_match"
 
 
-def resolution_key(norm_title: str, year: int | None) -> str:
-    return f"resolve:{norm_title}:{year if year is not None else '-'}"
+def resolution_key(norm_title: str, year: int | None, series: bool = False) -> str:
+    # Movie keys keep their original form; TV ids are a separate number space, so a "tv:" part.
+    return f"resolve:{'tv:' if series else ''}{norm_title}:{year if year is not None else '-'}"
 
 
-def details_key(tmdb_id: int, credits: bool) -> str:
-    return f"details:{tmdb_id}:{'credits' if credits else 'base'}"
+def details_key(tmdb_id: int, credits: bool, series: bool = False) -> str:
+    return f"details:{'tv:' if series else ''}{tmdb_id}:{'credits' if credits else 'base'}"
 
 
 # --------------------------------------------------------------------------- client
@@ -557,7 +592,8 @@ class TMDBGate:
         query_norm = normalize_title(title)
         if not query_norm:
             return None
-        key = resolution_key(query_norm, year)
+        series = _is_series(self.rules)
+        key = resolution_key(query_norm, year, series)
         cached = await asyncio.to_thread(self.cache.get, key, RESOLUTION_TTL_MS)
         if cached is not None:
             if cached[1] != _NO_MATCH:
@@ -572,8 +608,8 @@ class TMDBGate:
             for year_filter in phase:
                 params = {"query": title, "include_adult": "false", "language": "en-US", "page": "1"}
                 if year_filter is not None:
-                    params["primary_release_year"] = str(year_filter)
-                hits += _hits(await self.client.get("/search/movie", params))
+                    params["first_air_date_year" if series else "primary_release_year"] = str(year_filter)
+                hits += _hits(await self.client.get("/search/tv" if series else "/search/movie", params), series)
             best = pick_best(query_norm, year, hits)
             if best is not None:
                 break
@@ -583,15 +619,17 @@ class TMDBGate:
         return tmdb_id
 
     async def details(self, tmdb_id: int) -> dict | None:
-        """Movie details with external ids and keywords (and credits if the rules need them)."""
-        credits = self.rules.include_credits
-        key = details_key(tmdb_id, credits)
+        """Movie or TV details with external ids and keywords (and credits if the rules need them)."""
+        series = _is_series(self.rules)
+        credits = self.rules.include_credits and not series
+        key = details_key(tmdb_id, credits, series)
         cached = await asyncio.to_thread(self.cache.get, key, DETAILS_TTL_MS)
         if cached is not None and cached[1]:
             return json.loads(cached[1])
         append = "external_ids,keywords" + (",credits" if credits else "")
         try:
-            details = await self.client.get(f"/movie/{tmdb_id}", {"language": "en-US", "append_to_response": append})
+            path = f"/tv/{tmdb_id}" if series else f"/movie/{tmdb_id}"
+            details = await self.client.get(path, {"language": "en-US", "append_to_response": append})
         except TMDBError as e:
             if e.category == "not_found":
                 return None
@@ -613,4 +651,4 @@ class TMDBGate:
         reasons = evaluate(details, self.rules)
         if reasons:
             return Rejection(reasons[0], title, year, tmdb_id, tuple(reasons))
-        return to_candidate(details)
+        return to_candidate(details, _is_series(self.rules))

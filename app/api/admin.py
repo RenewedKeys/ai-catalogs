@@ -41,7 +41,7 @@ import re
 import secrets
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
@@ -52,7 +52,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.curated import PUBLIC_SEGMENT
 from app.api.ops import enqueue
 from app.core.config import settings
-from app.curation import editor
+from app.curation import editor, media
 from app.curation.definitions import DefinitionError
 from app.curation.status import catalog_status, iso
 from app.curation.tmdb_gate import TMDBClient
@@ -91,6 +91,10 @@ SECURITY_HEADERS = {
 # Fixed notices, selected by a key in the redirect URL (never free text from the URL).
 NOTICES = {
     "saved": "Saved.",
+    "type_changed": (
+        "Saved. This catalog switched between movies and shows: re-import the addon in AIOMetadata so it "
+        "uses the new type. The previous list keeps showing until the first new one is published."
+    ),
     "created": "Catalog created.",
     "moved": "You can edit this catalog here now.",
     "enabled": "Catalog is visible.",
@@ -159,8 +163,12 @@ STAGE_LABELS_ONE = {
 }
 
 
-def run_details(run: dict[str, Any]) -> list[str]:
+def run_details(run: dict[str, Any], kind: str = media.MOVIE) -> list[str]:
     """The run's counts as short plain phrases, e.g. '2 AI requests'."""
+    return [editor.say(line, kind) for line in _run_details(run)]
+
+
+def _run_details(run: dict[str, Any]) -> list[str]:
     out = []
     for key, n in (run.get("stage_counts") or {}).items():
         if key in ("generated", "eligible", "selected"):
@@ -196,7 +204,7 @@ _FRIENDLY = [
 ]
 
 
-def friendly_error(message: str) -> str:
+def friendly_error(message: str, kind: str = media.MOVIE) -> str:
     """'year_min: Input should be ...' -> 'Released from: enter a whole number'; field names anywhere
     in the message become their on-page labels."""
     message = re.sub(r"^Value error, ", "", message.strip())
@@ -210,15 +218,22 @@ def friendly_error(message: str) -> str:
             if pattern.match(rest):
                 rest = pattern.sub(replacement, rest, count=1)
                 break
-        message = f"{editor.label_of(field.split('.')[0])}: {rest}"
+        message = f"{editor.label_of(field.split('.')[0], kind)}: {rest}"
     names = sorted(editor.LABELS, key=len, reverse=True)
     message = re.sub(
         r"\b(" + "|".join(map(re.escape, names)) + r")\b(?!\s*:)",
-        lambda m: f"“{editor.label_of(m.group(1))}”",
+        lambda m: f"“{editor.label_of(m.group(1), kind)}”",
         message,
     )
     message = message.replace("publish_partial", "“Publish what was found”").replace(" films", " movies")
-    return message
+    message = message.replace(" film(s)", " movie(s)")
+    return editor.say(message, kind)
+
+
+def _form_kind(form: Mapping[str, Any], mode: str, base: Mapping[str, Any]) -> str:
+    if mode == "form":
+        return media.SERIES if form.get("type") == media.SERIES else media.MOVIE
+    return media.media_type(base)
 
 
 def when(value: Any) -> str:
@@ -443,9 +458,17 @@ def _catalogs() -> list[dict[str, Any]]:
     now = db.now_ms()
     with db.session() as conn:
         rows = conn.execute(
-            "SELECT catalog_id, config_rev FROM catalog_defs WHERE state != 'removed' ORDER BY position, catalog_id"
+            "SELECT catalog_id, config_rev, definition_json FROM catalog_defs WHERE state != 'removed' "
+            "ORDER BY position, catalog_id"
         ).fetchall()
-        return [{**catalog_status(conn, r["catalog_id"], now), "config_rev": r["config_rev"]} for r in rows]
+        return [
+            {
+                **catalog_status(conn, r["catalog_id"], now),
+                "config_rev": r["config_rev"],
+                "kind": media.media_type(json.loads(r["definition_json"])),
+            }
+            for r in rows
+        ]
 
 
 def _reorder(ids: list[str]) -> int:
@@ -464,7 +487,7 @@ def _reorder(ids: list[str]) -> int:
 
 # ------------------------------------------------------------------ suggestions (pickers)
 
-SUGGEST_KINDS = {"movie", "collection", "company", "keyword", "model"}
+SUGGEST_KINDS = {"movie", "tv", "collection", "company", "keyword", "model"}
 MAX_SUGGESTIONS = 12
 _MODELS: dict[str, Any] = {"at": 0.0, "ids": []}
 MODELS_TTL_S = 3600
@@ -497,12 +520,13 @@ async def suggestions(kind: str, query: str, tmdb_client_factory: Callable[[], T
         return [{"label": m, "value": m} for m in ids if all(w in m.lower() for w in words)][:MAX_SUGGESTIONS]
     client = tmdb_client_factory()
     try:
-        if kind == "movie":
+        if kind in ("movie", "tv"):
             params = {"query": query, "include_adult": "false", "language": "en-US", "page": "1"}
-            results = (await client.get("/search/movie", params)).get("results") or []
+            results = (await client.get(f"/search/{kind}", params)).get("results") or []
+            name_key, date_key = ("name", "first_air_date") if kind == "tv" else ("title", "release_date")
             out = []
             for r in results:
-                title, year = (r.get("title") or "").strip(), (r.get("release_date") or "")[:4]
+                title, year = (r.get(name_key) or "").strip(), (r.get(date_key) or "")[:4]
                 if title:
                     text = f"{title} ({year})" if year.isdigit() else title
                     out.append({"label": text, "value": text, "votes": r.get("vote_count") or 0})
@@ -613,6 +637,7 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
     admin.state.tmdb_client_factory = tmdb_client_factory or TMDBClient
     env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=select_autoescape(default=True))
     env.filters["when"] = when
+    env.filters["say"] = editor.say
     from app import __version__
 
     env.globals["version"] = __version__
@@ -748,10 +773,15 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
         message: Optional[str] = None,
     ) -> HTMLResponse:
         definition = catalog["definition"] if catalog else {}
+        kind = media.SERIES if (values or {}).get("type", definition.get("type")) == media.SERIES else media.MOVIE
         return page(
             request,
             "catalog.html",
             status_code,
+            kind=kind,
+            saved_kind=media.media_type(definition),
+            movie_only=editor.MOVIE_ONLY_FIELDS,
+            series_genres=editor.SERIES_GENRES,
             catalog=catalog,
             catalog_id=catalog["catalog_id"] if catalog else catalog_id,
             basic=editor.basic_fields(),
@@ -841,14 +871,17 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
                 await run_in_threadpool(
                     editor.save_checked, catalog_id, checked, base_rev=catalog["config_rev"] if catalog else None
                 )
-                return redirect(f"/catalogs/{catalog_id}", "saved" if catalog else "created")
+                switched = catalog is not None and media.media_type(base) != media.media_type(checked.definition)
+                return redirect(
+                    f"/catalogs/{catalog_id}", "type_changed" if switched else ("saved" if catalog else "created")
+                )
         except DefinitionError as e:
             return _editor_page(
                 request,
                 catalog,
                 catalog_id=catalog_id,
                 mode=mode,
-                errors=[friendly_error(m) for m in str(e).split("; ")],
+                errors=[friendly_error(m, _form_kind(form, mode, base)) for m in str(e).split("; ")],
                 status_code=422,
                 **keep,
             )

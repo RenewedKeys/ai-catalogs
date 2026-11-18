@@ -1,11 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ catalog.name if catalog else "New catalog" }} · AI Catalogs{% endblock %}
 
+{# Text that reads "movies" or "shows" with the Movies / Shows toggle (admin.js swaps it). #}
+{% macro say(text) -%}
+<span data-movie="{{ text }}" data-series="{{ text|say('series') }}">{{ text|say(kind) }}</span>
+{%- endmacro %}
+
 {% macro field(f) -%}
 {% set v = values.get(f.name, "") %}
 {% set w = widgets.get(f.name) %}
-<div class="field{{ ' full' if f.name == 'prompt' else '' }}">
-  <label for="f-{{ f.name }}">{{ label_of(f.name) }}</label>
+<div class="field{{ ' full' if f.name == 'prompt' else '' }}"{% if f.name in movie_only %} data-movie-only{% endif %}>
+  <label for="f-{{ f.name }}" data-movie="{{ label_of(f.name) }}" data-series="{{ label_of(f.name, 'series') }}">{{ label_of(f.name, kind) }}</label>
   <div class="control">
   {% if f.kind == "bool" %}
     <input id="f-{{ f.name }}" type="checkbox" class="switch" name="{{ f.name }}" value="on" {{ "checked" if v else "" }}>
@@ -35,13 +40,13 @@
   {% else %}
     <textarea id="f-{{ f.name }}" name="{{ f.name }}" rows="{{ 3 if f.kind == 'yaml' else 2 }}" class="{{ 'mono' if f.kind == 'yaml' else '' }}"
       {% if w %} data-widget="{{ w.widget }}" data-source="{{ w.source or '' }}" data-format="{{ f.kind }}" data-json="{{ (current_json.get(f.name, 'null')) }}"
-        {% if w.source == "languages" %} data-options='{{ languages|tojson }}'{% elif w.source == "genres" %} data-options='{{ genres|tojson }}'{% elif w.source == "decades" %} data-options='{{ decade_options|tojson }}'{% endif %}{% endif %}>
+        {% if w.source == "languages" %} data-options='{{ languages|tojson }}'{% elif w.source == "genres" %} data-options='{{ (series_genres if kind == "series" else genres)|tojson }}' data-options-movie='{{ genres|tojson }}' data-options-series='{{ series_genres|tojson }}'{% elif w.source == "decades" %} data-options='{{ decade_options|tojson }}'{% endif %}{% endif %}>
 {{ v }}</textarea>
   {% endif %}
   </div>
   {% set h = help_of(f) %}
   {% if f.name == "exclude_watched" and not mdblist_ready %}{% set h = "Set MDBLIST_API_KEY on the server to use this." %}{% endif %}
-  {% if h %}<span class="help">{{ h }}</span>{% endif %}
+  {% if h %}<span class="help" data-movie="{{ h }}" data-series="{{ h|say('series') }}">{{ h|say(kind) }}</span>{% endif %}
 </div>
 {%- endmacro %}
 
@@ -117,7 +122,7 @@
 </nav>
 
 {# ------------------------------------------------------------ settings #}
-<form method="post" action="{{ action }}" id="form-tab" class="stack">
+<form method="post" action="{{ action }}" id="form-tab" class="stack" data-kind="{{ kind }}" data-saved-kind="{{ saved_kind if catalog else '' }}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="mode" value="form">
   {% if catalog %}<input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">{% endif %}
@@ -127,7 +132,19 @@
 
   <section class="card">
     <h2>The catalog</h2>
-    <p class="sub">Name it and describe the movies you want, in your own words.</p>
+    <div class="field">
+      <label>{{ label_of("type") }}</label>
+      <div>
+        <div class="segmented" role="radiogroup" aria-label="{{ label_of('type') }}">
+          {% for m, text in [("movie", "Movies"), ("series", "Shows")] %}
+          <label><input type="radio" name="type" value="{{ m }}" {{ "checked" if kind == m else "" }}><span>{{ text }}</span></label>
+          {% endfor %}
+        </div>
+      </div>
+      <span class="help">Each catalog is either movies or shows.</span>
+      {% if catalog %}<span class="help warning-text" data-switch-note {{ "hidden" if kind == saved_kind else "" }}>Switching an existing catalog: after saving, re-import the addon in AIOMetadata so it uses the new type.</span>{% endif %}
+    </div>
+    <p class="sub">{{ say("Name it and describe the movies you want, in your own words.") }}</p>
     {% if by.name %}{{ field(by.name) }}{% endif %}
     {% if by.prompt %}{{ field(by.prompt) }}{% endif %}
     {% if by.target_count %}{{ field(by.target_count) }}{% endif %}
@@ -162,7 +179,7 @@
 
   <section class="card">
     <h2>Rules</h2>
-    <p class="sub">Every movie is checked against these. Leave a box empty for no limit.</p>
+    <p class="sub">{{ say("Every movie is checked against these. Leave a box empty for no limit.") }}</p>
     {% for n in ("min_vote_average", "min_vote_count", "year_min", "year_max", "min_runtime", "languages", "exclude_watched", "blacklist_titles") %}
     {% if by[n] %}{{ field(by[n]) }}{% endif %}
     {% endfor %}
@@ -232,11 +249,11 @@
           {% for k, n in r.reject_reasons.items() %}<span>{{ reject_label(k) }} · {{ n }}</span>{% endfor %}
         </div>
         {% endif %}
-        {% set d = run_details(r) %}
+        {% set d = run_details(r, saved_kind) %}
         {% if d %}<p class="run-details">{{ d | join(" · ") }}</p>{% endif %}
         {% if r.picks %}
         <details class="picks" {{ "open" if loop.first else "" }}>
-          <summary>{{ "The" if r.kind == "dry_run" else "" }} {{ r.picks|length }} movies it picked{{ " (not published)" if r.kind == "dry_run" else "" }}</summary>
+          <summary>{{ "The" if r.kind == "dry_run" else "" }} {{ r.picks|length }} {{ "movies"|say(saved_kind) }} it picked{{ " (not published)" if r.kind == "dry_run" else "" }}</summary>
           <ol class="movie-grid">
             {% for m in r.picks %}<li><span class="t">{{ m.title }}</span>{% if m.year %} <span class="y">{{ m.year }}</span>{% endif %}</li>{% endfor %}
           </ol>
@@ -255,12 +272,12 @@
     <p class="muted small">Each run publishes a new version of the catalog. Bring back an earlier one if you liked it better.</p>
     {% if catalog.snapshots %}
     <table class="list">
-      <thead><tr><th>Published</th><th>Movies</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Published</th><th>{{ "Movies"|say(saved_kind) }}</th><th>Status</th><th></th></tr></thead>
       <tbody>
       {% for s in catalog.snapshots %}
       <tr>
         <td>{{ s.created_at | when }}{% if s.movies %}
-          <details class="picks inline-picks"><summary>See the movies</summary>
+          <details class="picks inline-picks"><summary>{{ "See the movies"|say(saved_kind) }}</summary>
             <ol class="movie-grid">{% for m in s.movies %}<li><span class="t">{{ m.title }}</span>{% if m.year %} <span class="y">{{ m.year }}</span>{% endif %}</li>{% endfor %}</ol>
           </details>{% endif %}</td><td>{{ s["items"] }}</td>
         <td>{% if s.status == "active" %}<span class="chip live">Showing now</span>{% elif s.revoked %}Withdrawn{% elif not s.has_payload %}Expired{% else %}Earlier{% endif %}</td>

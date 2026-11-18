@@ -83,7 +83,8 @@ def test_every_gate_threshold_has_a_prompt_counterpart():
         "year_max": {"year_max": 2002},
         "include_credits": {"director_cap": 1},
     }
-    resolved_elsewhere = {"blacklist_tmdb_ids", "franchise_denylist"}  # names resolved at apply time
+    # names resolved at apply time; the type is stated by the system message, not a constraint
+    resolved_elsewhere = {"blacklist_tmdb_ids", "franchise_denylist", "media_type"}
     for f in dataclasses.fields(GateRules):
         if f.name in resolved_elsewhere:
             continue

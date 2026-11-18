@@ -68,6 +68,26 @@ class Film:
             d["credits"] = {"crew": [{"id": i, "job": "Director", "name": f"Director {i}"} for i in self.director_ids]}
         return d
 
+    def tv_details(self) -> dict:
+        """The same entry as TV details ("Show N"), for series catalogs."""
+        return {
+            "id": self.n,
+            "name": f"Show {self.n}",
+            "original_name": f"Show {self.n}",
+            "first_air_date": f"{self.year}-06-01",
+            "vote_average": self.vote_average,
+            "vote_count": self.vote_count,
+            "original_language": self.language,
+            "genres": [{"id": g, "name": f"genre {g}"} for g in self.genre_ids],
+            "adult": False,
+            "status": "Returning Series",
+            "external_ids": {"imdb_id": self.imdb_id},
+            "keywords": {"results": []},
+            "production_companies": [],
+            "poster_path": f"/s{self.n}.jpg",
+            "overview": f"Overview of show {self.n}.",
+        }
+
 
 def default_year(n: int) -> int:
     return 1980 + n % 45  # 1980..2024
@@ -83,6 +103,7 @@ def make_universe(n: int, **overrides: Callable[[int], object]) -> dict[int, Fil
 
 
 _FILM_RE = re.compile(r"^film (\d+)$")
+_SHOW_RE = re.compile(r"^show (\d+)$")
 
 
 class UniverseTMDB:
@@ -119,6 +140,18 @@ class UniverseTMDB:
                     }
                 )
             return httpx.Response(200, json={"page": 1, "results": results})
+        if path.endswith("/search/tv"):
+            m = _SHOW_RE.match(normalize_title(request.url.params["query"]))
+            year = request.url.params.get("first_air_date_year")
+            film = self.films.get(int(m.group(1))) if m else None
+            results = []
+            if film is not None and (year is None or int(year) == film.year):
+                d = film.tv_details()
+                results.append({k: d[k] for k in ("id", "name", "original_name", "first_air_date", "vote_count")})
+            return httpx.Response(200, json={"page": 1, "results": results})
+        if "/tv/" in path:
+            film = self.films.get(int(path.rsplit("/", 1)[1]))
+            return httpx.Response(200, json=film.tv_details()) if film else httpx.Response(404, json={})
         for kind in ("collection", "company", "keyword"):
             if path.endswith(f"/search/{kind}"):
                 return httpx.Response(
@@ -139,7 +172,7 @@ class UniverseTMDB:
         return TMDBClient("test-read-token", transport=self.transport, sleep=no_sleep)
 
 
-_COUNT_RE = re.compile(r"Return exactly (\d+) films")
+_COUNT_RE = re.compile(r"Return exactly (\d+) (?:films|TV series)")
 _NEEDED_DECADE_RE = re.compile(r"more film\(s\) released in the (\d{4})s")
 
 
@@ -168,15 +201,17 @@ class ScriptedLLM:
             return httpx2.Response(
                 self.fail_status, json={"error": {"message": f"fail {BODY_SENTINEL}", "code": self.fail_status}}
             )
-        count = int(_COUNT_RE.search(body["messages"][0]["content"]).group(1))
+        system = body["messages"][0]["content"]
+        series = system.startswith("You are a TV curator")
+        count = int(_COUNT_RE.search(system).group(1))
         wanted = {int(d) for d in _NEEDED_DECADE_RE.findall(self.prompts[-1])}
         movies = []
         for n in self._pick(count, wanted):
             film = self.films.get(n)
             year = film.year if film else default_year(n)
             category = film.category if film else "alpha"
-            movies.append({"title": f"Film {n}", "year": year, "category": category})
-        return httpx2.Response(200, json=completion(json.dumps({"movies": movies})))
+            movies.append({"title": f"{'Show' if series else 'Film'} {n}", "year": year, "category": category})
+        return httpx2.Response(200, json=completion(json.dumps({"series" if series else "movies": movies})))
 
     def _pick(self, count: int, wanted_decades: set[int]) -> list[int]:
         """Next films in sequence; like a real model, favour decades the prompt says are missing."""

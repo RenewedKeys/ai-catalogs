@@ -26,7 +26,7 @@
 {% if not catalogs %}
 <div class="empty">
   <h2>No catalogs yet</h2>
-  <p>Describe the movies you want in plain words, and AI Catalogs keeps a fresh catalog of them in your apps.</p>
+  <p>Describe the movies or shows you want in plain words, and AI Catalogs keeps a fresh catalog of them in your apps.</p>
   <a class="button" href="{{ prefix }}/new">+ Create your first catalog</a>
 </div>
 {% else %}
@@ -39,6 +39,7 @@
       <div class="row-start">
         <button type="button" class="grip" aria-label="Drag to reorder {{ c.name }}" title="Drag to reorder">⠿</button>
         <a class="name" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">{{ c.name }}</a>
+        <span class="chip kind">{{ "Shows" if c.kind == "series" else "Movies" }}</span>
       </div>
       {% if c.last_error %}<span class="chip bad">Needs attention</span>
       {% elif busy %}<span class="chip busy">Running</span>
@@ -46,7 +47,7 @@
       {% else %}<span class="chip off">Hidden</span>{% endif %}
     </div>
     <a class="meta" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">
-      {% if c.active_snapshot %}{{ c.active_snapshot["items"] }} movies · updated {{ c.active_snapshot.created_at | when }}
+      {% if c.active_snapshot %}{{ c.active_snapshot["items"] }} {{ "movies"|say(c.kind) }} · updated {{ c.active_snapshot.created_at | when }}
       {% else %}Not run yet: press Run now to fill it{% endif %}
     </a>
     {% if run %}<span class="meta">Last: {{ run_kind(run) }} · {{ run_status(run) }}</span>{% endif %}
