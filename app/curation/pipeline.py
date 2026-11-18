@@ -631,10 +631,7 @@ class Pipeline:
         count = len(selection.selected)
         if self._satisfied(selection):
             required, quotas, partial = self.settings.target_count, dict(self.limits.decade_min), False
-        elif (
-            self.settings.on_shortfall == "publish_partial"
-            and count >= (self.settings.min_accept or 1)
-        ):
+        elif self.settings.on_shortfall == "publish_partial" and count >= (self.settings.min_accept or 1):
             required, partial = count, True
             quotas = scaled_quotas(self.limits, count, self.settings.target_count)
             if any(sum(1 for p in selection.selected if p.decade == d) < n for d, n in quotas.items()):
