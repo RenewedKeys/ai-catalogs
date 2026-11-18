@@ -246,7 +246,7 @@ The pipeline keeps one candidate pool for the run; every stage is idempotent ove
 
 1. **Render prompt** (section 6) for the first batch.
 2. **Generate** via `CuratedLLMService` (section 7): ask for
-   `target_count * overgenerate_factor` (default 100 x 1.6) in batches of <= 60, each
+   `target_count * overgenerate_factor` (default 100 x 2.0) in batches of <= 60, each
    batch told the titles already produced this run.
 3. **Normalise + dedupe** on (casefolded, punctuation-stripped title, year).
 4. **Static + history pre-filter** by normalised title/year (cheap; saves TMDB calls).
@@ -355,7 +355,7 @@ automatically when a definition is applied, with the same resolver as the gateke
 `scripts/resolve_blacklist.py` exposes that resolution for inspection only.
 
 The YAML also carries: `model`, `temperature`, `max_tokens`, `timeout_s`,
-`target_count` (default 100), `overgenerate_factor` (default 1.6), `schedule` (cron +
+`target_count` (default 100), `overgenerate_factor` (default 2.0), `schedule` (cron +
 timezone), `history_window_runs` (default 7), `history_mode` (default `strict`),
 `on_shortfall` (default `fail`), `max_model_calls_per_run` (default 8),
 `max_runs_per_day` (default 4), `weekday_focus`, `exclude_watched` (default false) and

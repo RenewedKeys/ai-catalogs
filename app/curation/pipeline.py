@@ -311,7 +311,7 @@ class RunSettings:
     @classmethod
     def from_definition(cls, d: Mapping[str, Any]) -> "RunSettings":
         target = int(d.get("target_count") or 100)
-        factor = float(d.get("overgenerate_factor") or 1.6)
+        factor = float(d.get("overgenerate_factor") or 2.0)
         return cls(
             target_count=target,
             request_total=max(target, math.ceil(target * factor)),
@@ -633,8 +633,7 @@ class Pipeline:
             required, quotas, partial = self.settings.target_count, dict(self.limits.decade_min), False
         elif (
             self.settings.on_shortfall == "publish_partial"
-            and self.settings.min_accept is not None
-            and count >= self.settings.min_accept
+            and count >= (self.settings.min_accept or 1)
         ):
             required, partial = count, True
             quotas = scaled_quotas(self.limits, count, self.settings.target_count)

@@ -52,10 +52,10 @@ franchise_denylist:
 
 # Run shape (defaults shown):
 target_count: 100              # list size, at most 250
-overgenerate_factor: 1.6       # ask for target_count x this in the first round
+overgenerate_factor: 2.0       # ask for target_count x this in the first round
 history_window_runs: 7         # titles from the last N published lists are not repeated
 history_mode: strict           # relax: repeat the oldest titles if new ones run out
-on_shortfall: fail             # publish_partial: publish at least min_accept items
+on_shortfall: fail             # publish_partial: publish what was found (at least min_accept items, if set)
 # min_accept: 80
 max_model_calls_per_run: 8
 max_runs_per_day: 4

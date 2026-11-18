@@ -362,7 +362,10 @@ def test_validation_errors_are_shown_and_nothing_is_stored(client):
         ({"prompt": PROMPT, "target_count": "abc"}, "Movies in the catalog: enter a number"),
         ({"prompt": PROMPT, "schedule": "cron: '0 6 * *'"}, "Refresh: a custom schedule needs five parts"),
         ({"prompt": PROMPT, "decade_min": "[unclosed"}, "Minimum movies per decade: couldn&#39;t read this value"),
-        ({"prompt": PROMPT, "on_shortfall": "publish_partial"}, "Smallest catalog worth publishing"),
+        (
+            {"prompt": PROMPT, "target_count": "40", "on_shortfall": "publish_partial", "min_accept": "60"},
+            "Smallest catalog worth publishing",
+        ),
         ({"prompt": ""}, "What kind of movies do you want?"),
     ]
     for values, expected in cases:
