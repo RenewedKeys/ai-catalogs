@@ -60,6 +60,7 @@ from app.curation.status import catalog_status, iso
 from app.curation.tmdb_gate import TMDBClient
 from app.store import db
 from app.store.catalogs import CATALOG_ID_RE
+from app.store.jobs import clear_runs
 from app.store.maintenance import MaintenanceError, rollback
 
 PREFIX = "/configure"
@@ -110,6 +111,8 @@ NOTICES = {
     "not_enabled": "This catalog is hidden. Make it visible to run it.",
     "rolled_back": "Done. That earlier version is showing again.",
     "deleted": "Catalog deleted.",
+    "runs_cleared": "Old runs cleared.",
+    "nothing_to_clear": "Nothing to clear.",
 }
 
 RUN_KINDS = {"refresh": "Refresh", "dry_run": "Test run"}
@@ -1035,6 +1038,19 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
         if state == "removed":
             return redirect("/", "deleted")
         return redirect(f"/catalogs/{catalog_id}", state, "activity-tab")
+
+    @admin.post("/catalogs/{catalog_id}/clear-runs")
+    async def clear_old_runs(request: Request, catalog_id: str):
+        await verified_form(request, request.state.session["sid"])
+        if await run_in_threadpool(_load, catalog_id) is None:
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        def _clear() -> int:
+            with db.session() as conn:
+                return clear_runs(conn, catalog_id)
+
+        n = await run_in_threadpool(_clear)
+        return redirect(f"/catalogs/{catalog_id}", "runs_cleared" if n else "nothing_to_clear", "activity-tab")
 
     @admin.post("/catalogs/{catalog_id}/dry-run")
     async def dry_run(request: Request, catalog_id: str):
