@@ -353,6 +353,8 @@ class Runner:
                 stage = fields.pop("stage_counts_json", None)
                 rejects = fields.pop("reject_reasons_json", None)
                 items = result.items if result and claim.kind == "refresh" else None
+                if result and claim.kind == "dry_run":  # a test run keeps its picks to show them
+                    fields["preview_json"] = json.dumps([[i.title, i.year, i.imdb_id] for i in result.items])
                 outcome = await self._db(
                     commit_run,
                     self.lease,

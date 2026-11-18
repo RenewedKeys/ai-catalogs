@@ -232,6 +232,15 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "CREATE INDEX admin_login_failures_by_at ON admin_login_failures (at)",
         ],
     ),
+    (
+        6,
+        [
+            # The movies a dry run (test run) picked, so the editor can show them:
+            # [[title, year, imdb_id], ...] in list order. NULL for refreshes (their list is the
+            # snapshot) and for runs before this migration.
+            "ALTER TABLE runs ADD COLUMN preview_json TEXT",
+        ],
+    ),
 ]
 
 LATEST_VERSION = MIGRATIONS[-1][0]

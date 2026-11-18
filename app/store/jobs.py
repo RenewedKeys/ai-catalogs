@@ -300,6 +300,7 @@ RUN_FIELDS = frozenset(
         "tokens_out",
         "relaxed_window",
         "repeats",
+        "preview_json",
     }
 )
 

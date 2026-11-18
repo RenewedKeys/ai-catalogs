@@ -20,6 +20,7 @@ on TMDB (a failure means nothing is saved), then ``accept_definition`` with ``so
 
 import io
 import json
+from datetime import date
 import re
 import types
 import typing
@@ -331,6 +332,10 @@ def definition_from_form(form: Mapping[str, Optional[str]], base: Mapping[str, A
     out: dict[str, Any] = {}
     errors = []
     for s in editor_fields():
+        if s.name in FORM_HIDDEN and s.name not in form:
+            if s.name in base:
+                out[s.name] = base[s.name]  # not on the page: keep it as stored
+            continue
         try:
             if s.name == "schedule" and "sched_mode" in form:
                 v = schedule_from_form(form, base.get("schedule"))
@@ -403,7 +408,10 @@ async def check_definition(
             client = tmdb_client_factory()
             resolved = await resolve_exclusions(client, inputs)
         except TMDBError as e:
-            raise DefinitionError(f"exclusion names could not be resolved on TMDB ({e}); not saved") from None
+            reason = TMDB_PROBLEMS.get(e.category, "TMDB didn't answer")
+            raise DefinitionError(
+                f"Couldn't look up your exclusions on TMDB ({reason}). Nothing was saved; try again."
+            ) from None
         finally:
             if client is not None:
                 await client.aclose()
@@ -417,6 +425,15 @@ def display_name(catalog_id: str, definition: Mapping[str, Any]) -> str:
     if isinstance(name, str) and name.strip():
         return name.strip()
     return catalog_id.replace("_", " ").title()
+
+
+TMDB_PROBLEMS = {
+    "provider_auth": "the TMDB key was refused; check TMDB_API_KEY on the server",
+    "provider_rate_limit": "TMDB is busy right now",
+    "provider_http_5xx": "TMDB is having problems right now",
+    "timeout": "TMDB took too long to answer",
+    "transport": "the server couldn't reach TMDB",
+}
 
 
 class ConflictError(DefinitionError):
@@ -451,10 +468,10 @@ def save_checked(
                 raise ConflictError("the catalog was changed elsewhere since this page was loaded; reload it")
         if row is None or row["state"] == "removed":
             position = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM catalog_defs").fetchone()[0]
+            if defn.get("position") is not None:
+                position = defn["position"]
         else:
-            position = row["position"]
-        if defn.get("position") is not None:
-            position = defn["position"]
+            position = row["position"]  # the dashboard's drag order owns it from here on
         state = "enabled" if defn.get("enabled", True) else "disabled"
         rev = accept_definition(conn, catalog_id, display_name(catalog_id, defn), defn, state=state, position=position)
         conn.execute(
@@ -501,7 +518,7 @@ def set_state(catalog_id: str, state: str, *, base_rev: str, db_path: Optional[s
         conn.execute("UPDATE catalog_defs SET source = 'editor' WHERE catalog_id = ?", (catalog_id,))
 
 
-# ------------------------------------------------------------------ the simple form (PLAN.md section 26)
+# ------------------------------------------------------------------ the simple form (PLAN.md sections 26, 27)
 
 # Shown up front, in this order, with plain labels. Everything else is under "Advanced".
 BASIC_FIELDS = (
@@ -517,84 +534,215 @@ BASIC_FIELDS = (
     "exclude_watched",
     "blacklist_titles",
 )
+# Not on the page at all (the dashboard orders catalogs; "Never include" covers TMDB ids).
+# A stored value is kept on save.
+FORM_HIDDEN = frozenset({"position", "blacklist_tmdb_ids"})
 
 LABELS = {
     "name": "Name",
-    "prompt": "What should this list be?",
-    "target_count": "Films in the list",
+    "prompt": "What kind of movies do you want?",
+    "target_count": "Movies in the catalog",
     "min_vote_average": "Minimum rating",
     "min_vote_count": "Minimum number of ratings",
     "year_min": "Released from",
     "year_max": "Released until",
     "min_runtime": "Minimum length (minutes)",
     "languages": "Original language",
-    "exclude_watched": "Skip films I've watched",
+    "exclude_watched": "Skip movies I've watched",
     "blacklist_titles": "Never include",
-    "enabled": "Show in Stremio",
-    "position": "Order in the addon",
-    "focus": "Extra instruction for every refresh",
+    "enabled": "Catalog visible",
+    "focus": "Extra instruction",
     "weekday_focus": "Extra instruction per weekday",
-    "categories": "Categories to mix",
-    "anchors": "Example films (taste)",
-    "history_prompt_limit": "Recent films named to the AI",
-    "watched_prompt_limit": "Watched films named to the AI",
-    "max_prompt_chars": "Maximum request length (characters)",
-    "blacklist_tmdb_ids": "Never include (TMDB ids)",
-    "franchise_denylist": "Exclude franchises",
-    "excluded_genre_ids": "Exclude genres (TMDB genre ids)",
-    "max_per_collection": "Most films per franchise",
-    "director_cap": "Most films per director",
-    "decade_min": "Minimum films per decade",
-    "category_min": "Minimum films per category",
-    "overgenerate_factor": "Extra suggestions to ask for",
-    "history_window_runs": "Don't repeat films from the last … lists",
-    "history_mode": "When new films run out",
-    "on_shortfall": "If the list comes up short",
-    "min_accept": "Smallest list still published",
+    "categories": "Themes to spread the picks across",
+    "anchors": "Example movies (taste)",
+    "history_prompt_limit": "Recent movies to warn the AI about",
+    "watched_prompt_limit": "Watched movies to warn the AI about",
+    "max_prompt_chars": "Size limit of the AI request",
+    "franchise_denylist": "Exclude franchises, studios and keywords",
+    "excluded_genre_ids": "Exclude genres",
+    "max_per_collection": "Most movies from one franchise",
+    "director_cap": "Most movies from one director",
+    "decade_min": "Minimum movies per decade",
+    "category_min": "Minimum movies per theme",
+    "overgenerate_factor": "Ask the AI for extra movies",
+    "history_window_runs": "Don't repeat movies from the last … refreshes",
+    "history_mode": "When there aren't enough new movies",
+    "on_shortfall": "When a refresh comes up short",
+    "min_accept": "Smallest catalog worth publishing",
     "max_model_calls_per_run": "Most AI requests per refresh",
     "max_runs_per_day": "Most refreshes per day",
     "model": "AI model",
-    "temperature": "Creativity (temperature)",
-    "max_tokens": "Maximum response length (tokens)",
-    "timeout_s": "AI request timeout (seconds)",
+    "temperature": "Creativity",
+    "max_tokens": "Longest AI answer (tokens)",
+    "timeout_s": "Give up on the AI after (seconds)",
 }
 
 HELP = {
-    "prompt": "Describe it in your own words: the mood, genres, era, anything. The list size, your rules "
-    "below and recently shown films are added for you.",
-    "target_count": "Up to 250.",
-    "min_vote_average": "TMDB rating, 0 to 10. Empty: any.",
-    "min_vote_count": "Leaves out obscure films with only a handful of ratings. Empty: any.",
+    "prompt": "Describe the movies you want: mood, genres, era, style, what you love about them. "
+    "Leave out counts, dates, ratings and exclusions: set those below and they're added for you.",
+    "target_count": "How many movies each refresh puts in the catalog. Up to 250.",
+    "min_vote_average": "TMDB rating, 0 to 10. Empty: any rating.",
+    "min_vote_count": "Leaves out obscure movies with only a handful of ratings. Empty: any.",
     "year_min": "Empty: any year.",
     "year_max": "Empty: any year.",
     "min_runtime": "Empty: any length.",
-    "languages": "Language codes, one per line (en, fr, ja …). Empty: any language.",
-    "exclude_watched": "Needs an MDBList key in the server settings.",
-    "blacklist_titles": "One title per line, optionally with the year: Title (1999).",
-    "enabled": "Off keeps the catalog but hides it from the addon.",
-    "position": "Lower numbers come first.",
-    "focus": "Added to the description on every refresh.",
-    "weekday_focus": "YAML, e.g. friday: something light",
-    "categories": "One per line. Shuffled on every refresh to vary the picks.",
-    "anchors": "One title per line: films that show the taste you want.",
-    "franchise_denylist": "YAML with collections, companies, keywords or title_patterns.",
-    "decade_min": "YAML, e.g. 1990: 5",
-    "category_min": "YAML, e.g. alpha: 10",
-    "history_mode": "strict: never repeat; relax: allow the oldest films back.",
-    "on_shortfall": "fail: keep the previous list; publish_partial: publish what was found.",
-    "model": "An OpenRouter model id. Empty: the server default.",
+    "languages": "Only movies originally made in these languages. Empty: any language.",
+    "exclude_watched": "Leaves out everything you've watched, using your MDBList history.",
+    "blacklist_titles": "Type a title and pick it from the suggestions. These never appear.",
+    "enabled": "Off hides the catalog from your apps (AIOMetadata, Stremio …) and pauses its refreshes. "
+    "It stays here.",
+    "focus": 'One extra sentence sent with every refresh, e.g. "Lean towards hidden gems this time."',
+    "weekday_focus": 'A different emphasis per day, e.g. Friday: "something light and funny". '
+    "Used instead of the extra instruction on that day. Leave days empty to skip them.",
+    "categories": "Optional themes the AI should mix, e.g. heist, space horror, buddy comedy. "
+    "Their order is shuffled each refresh so the catalog varies.",
+    "anchors": "Movies that show the taste you want. The AI uses them as a reference; "
+    "add them to Never include too if they shouldn't appear.",
+    "history_prompt_limit": 'How many recently shown movies are listed in the request as "don\'t suggest these". '
+    "Default 150. The app also filters repeats out itself; this just saves wasted suggestions.",
+    "watched_prompt_limit": "Like the above, for movies you've watched (only with Skip movies I've watched). "
+    "Default 50.",
+    "max_prompt_chars": "A safety cap on the whole request the app sends to the AI: your description plus the "
+    "lists it adds. Not a limit on the description box. Default 24,000 characters; you shouldn't need "
+    "to change it.",
+    "franchise_denylist": "Type to search TMDB and pick: whole franchises (e.g. a film series), studios or "
+    "keywords. Anything that matches never appears.",
+    "excluded_genre_ids": "Movies with any of these genres never appear.",
+    "max_per_collection": "E.g. 1: at most one movie from any franchise. Empty: no limit.",
+    "director_cap": "E.g. 2: at most two movies by the same director. Empty: no limit.",
+    "decade_min": "Guarantee a spread across decades. A refresh that can't meet these keeps the " "previous version.",
+    "category_min": 'Guarantee some movies for a theme from "Themes to spread the picks across". '
+    "Best effort: a refresh still publishes if it can't.",
+    "overgenerate_factor": "Some suggestions get rejected by your rules, so the AI is asked for more than "
+    "needed. 1.6 asks for 64 to fill 40. Default 1.6.",
+    "history_window_runs": "Movies from the last few versions of this catalog are not picked again. "
+    "Default 7: with a daily refresh, nothing repeats within a week.",
+    "history_mode": "",
+    "on_shortfall": "",
+    "min_accept": 'Only used with "Publish what was found": a refresh that finds fewer movies than this keeps '
+    "the previous version instead.",
+    "max_model_calls_per_run": "A run asks the AI once (big catalogs: a few times, about 60 movies per ask). If too "
+    'many suggestions fail your rules, it asks again for more: those are the "extra rounds to fill gaps" in a '
+    "run's details. This caps all of them per run. Default 8; a typical run uses 1 or 2.",
+    "max_runs_per_day": "Caps refreshes of this catalog per day, including Run now and test runs. Default 4. "
+    "Protects your API quota from accidents.",
+    "model": "Type to search the models your AI provider offers. Empty: the server default.",
+    "temperature": "0 to 2. Lower is more predictable, higher more surprising picks. Empty: the model's "
+    "default (usually fine).",
+    "max_tokens": "The longest answer the AI may give. It doesn't change how many requests you use; it only "
+    "stops very long answers being cut off or running away. Default 8,000 is enough for 250 movies.",
+    "timeout_s": "How long to wait for one AI answer before giving up and retrying. Default 120.",
+}
+
+OPTION_LABELS = {
+    "history_mode": {
+        "strict": "Keep the previous version (never repeat)",
+        "relax": "Allow the oldest repeats back in",
+    },
+    "on_shortfall": {
+        "fail": "Keep the previous version",
+        "publish_partial": "Publish what was found",
+    },
 }
 
 GROUP_TITLES = {
     "Catalog": "General",
-    "Prompt variables": "Description extras",
+    "Prompt variables": "Steering the AI",
     "Exclusions": "Exclusions",
-    "Hard limits": "Rules",
+    "Hard limits": "Exclusions",
     "Selection": "Variety",
-    "Run shape": "Refresh behaviour",
+    "Run shape": "Refreshes",
     "Model": "AI model",
     OTHER_GROUP: "Other",
 }
+# Sliders use friendlier ranges than the model's hard bounds (typing a value outside still works).
+UI_BOUNDS = {
+    "year_min": (1900, date.today().year + 1),
+    "year_max": (1900, date.today().year + 1),
+    "min_runtime": (0, 240),
+    "history_window_runs": (0, 30),
+    "history_prompt_limit": (0, 300),
+    "watched_prompt_limit": (0, 200),
+    "overgenerate_factor": (1, 3),
+    "max_tokens": (1000, 16000),
+    "timeout_s": (10, 300),
+}
+NO_SLIDER = {"max_prompt_chars"}
+
+# Pickers: the field keeps its plain text format (one value per line, or YAML/JSON); the
+# browser script turns it into chips, suggestions or rows and writes the same format back.
+WIDGETS = {
+    "languages": {"widget": "chips", "source": "languages"},
+    "excluded_genre_ids": {"widget": "chips", "source": "genres"},
+    "blacklist_titles": {"widget": "chips", "source": "movie"},
+    "anchors": {"widget": "chips", "source": "movie"},
+    "categories": {"widget": "chips", "source": "free"},
+    "franchise_denylist": {"widget": "denylist"},
+    "weekday_focus": {"widget": "weekdays"},
+    "decade_min": {"widget": "pairs", "source": "decades"},
+    "category_min": {"widget": "pairs", "source": "categories"},
+    "model": {"widget": "suggest", "source": "model"},
+}
+
+LANGUAGES = [
+    ("en", "English"),
+    ("fr", "French"),
+    ("es", "Spanish"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("zh", "Chinese"),
+    ("cn", "Cantonese"),
+    ("hi", "Hindi"),
+    ("pt", "Portuguese"),
+    ("ru", "Russian"),
+    ("sv", "Swedish"),
+    ("da", "Danish"),
+    ("no", "Norwegian"),
+    ("fi", "Finnish"),
+    ("nl", "Dutch"),
+    ("pl", "Polish"),
+    ("tr", "Turkish"),
+    ("th", "Thai"),
+    ("id", "Indonesian"),
+    ("ar", "Arabic"),
+    ("he", "Hebrew"),
+    ("fa", "Persian"),
+    ("cs", "Czech"),
+    ("hu", "Hungarian"),
+    ("el", "Greek"),
+    ("ro", "Romanian"),
+    ("uk", "Ukrainian"),
+    ("ta", "Tamil"),
+    ("te", "Telugu"),
+    ("ml", "Malayalam"),
+    ("tl", "Tagalog"),
+    ("vi", "Vietnamese"),
+    ("is", "Icelandic"),
+]
+GENRES = [
+    (28, "Action"),
+    (12, "Adventure"),
+    (16, "Animation"),
+    (35, "Comedy"),
+    (80, "Crime"),
+    (99, "Documentary"),
+    (18, "Drama"),
+    (10751, "Family"),
+    (14, "Fantasy"),
+    (36, "History"),
+    (27, "Horror"),
+    (10402, "Music"),
+    (9648, "Mystery"),
+    (10749, "Romance"),
+    (878, "Science Fiction"),
+    (10770, "TV Movie"),
+    (53, "Thriller"),
+    (10752, "War"),
+    (37, "Western"),
+]
+DECADES = list(range(1920, date.today().year // 10 * 10 + 1, 10))
 
 
 def label_of(name: str) -> str:
@@ -602,31 +750,43 @@ def label_of(name: str) -> str:
 
 
 def help_of(spec: "FieldSpec") -> str:
-    text = HELP.get(spec.name)
-    if text:
-        return text
+    if spec.name in HELP:
+        return HELP[spec.name]
     if spec.minimum is not None and spec.maximum is not None:
         return f"{_num_text(spec.minimum)} to {_num_text(spec.maximum)}."
     if spec.kind == "lines":
         return "One per line."
-    if spec.kind == "yaml":
-        return "YAML."
     return ""
+
+
+def option_label(field_name: str, value: str) -> str:
+    return OPTION_LABELS.get(field_name, {}).get(value, value)
+
+
+def ui_spec(spec: "FieldSpec") -> "FieldSpec":
+    """The spec as the page shows it: friendlier slider ranges, no slider where it confuses."""
+    out = FieldSpec(**{f.name: getattr(spec, f.name) for f in dataclass_fields(FieldSpec)})
+    if spec.name in UI_BOUNDS and spec.kind == "number":
+        out.minimum, out.maximum = UI_BOUNDS[spec.name]
+    if spec.name in NO_SLIDER:
+        out.minimum = out.maximum = None
+    return out
 
 
 def basic_fields() -> list[FieldSpec]:
     by_name = {s.name: s for s in editor_fields()}
-    return [by_name[n] for n in BASIC_FIELDS if n in by_name]
+    return [ui_spec(by_name[n]) for n in BASIC_FIELDS if n in by_name]
 
 
 def advanced_groups() -> list[tuple[str, list[FieldSpec]]]:
     """Every field not shown up front, grouped (the schedule has its own widget)."""
-    out = []
+    out: dict[str, list[FieldSpec]] = {}
     for group, specs in grouped_fields():
-        rest = [s for s in specs if s.name not in BASIC_FIELDS and s.name != "schedule"]
+        rest = [ui_spec(s) for s in specs if s.name not in BASIC_FIELDS and s.name not in FORM_HIDDEN]
+        rest = [s for s in rest if s.name != "schedule"]
         if rest:
-            out.append((GROUP_TITLES.get(group, group), rest))
-    return out
+            out.setdefault(GROUP_TITLES.get(group, group), []).extend(rest)
+    return list(out.items())
 
 
 # --- schedule: "Manually / Every day at / Every week on / Custom" instead of cron

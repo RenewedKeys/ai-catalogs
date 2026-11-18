@@ -271,3 +271,24 @@ async def test_stop_waits_for_an_in_flight_renewal_before_releasing(monkeypatch)
     await asyncio.sleep(0.4)  # long enough for an undrained renewal to land
     with db.session() as conn:
         assert conn.execute("SELECT expires_at FROM lease").fetchone()[0] == 0
+
+
+async def test_a_test_run_keeps_its_picks_and_a_refresh_does_not(films):
+    import json as _json
+
+    services = FakeServices(ScriptedLLM(sorted(films), films), UniverseTMDB(films))
+    with db.session() as conn, db.transaction(conn):
+        accept_definition(conn, CID, "Example", definition(target_count=5, overgenerate_factor=1.0))
+    runner = Runner(owner="a", services=services)
+    assert await runner.start()
+    enqueue(kind="dry_run")
+    assert (await runner.run_next()).outcome == "dry_run_ok"
+    enqueue(kind="refresh")
+    assert (await runner.run_next()).outcome == "published"
+    await runner.stop()
+    with db.session() as conn:
+        rows = conn.execute("SELECT dry_run, preview_json FROM runs ORDER BY id").fetchall()
+    picks = _json.loads(rows[0]["preview_json"])
+    assert rows[0]["dry_run"] == 1 and len(picks) == 5
+    assert all(isinstance(p[0], str) and p[2].startswith("tt") for p in picks)
+    assert rows[1]["preview_json"] is None  # a refresh's list is its snapshot

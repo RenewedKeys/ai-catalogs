@@ -20,9 +20,10 @@ Variables (always all defined, so validation and production behave the same):
     watched                                          block of films the viewer has watched
                                                      (``exclude_watched``; empty otherwise)
 
-Blocks the template does not place itself are appended after it, in this order: limits,
-unmet, already-this-run, exclusions, watched. So a plain free-form prompt still gets every limit and
-exclusion, and a template that wants them elsewhere just references the variable.
+Blocks the template does not place itself are appended after it, in this order: focus,
+categories, anchors (one line each, when set), limits, unmet, already-this-run, exclusions,
+watched. So a plain free-form prompt still gets every setting, limit and exclusion, and a
+template that wants them elsewhere just references the variable.
 
 ``seed`` = sha256(date, catalog id, per-run nonce). It drives the category and anchor
 shuffle here and the final shuffle in selection, and is stored in ``runs``.
@@ -81,6 +82,12 @@ TEMPLATE_VARIABLES = frozenset(
 
 # Blocks appended after the template unless it references them, in this order.
 _APPENDABLE = ("limits_block", "unmet", "already_this_run", "exclusions", "watched")
+# Settings a plain description does not mention are still sent, before the blocks above.
+_EXTRAS = (
+    ("focus", lambda v: f"Today's focus: {v}"),
+    ("categories", lambda v: "Spread the picks across these categories: " + ", ".join(v) + "."),
+    ("anchors", lambda v: "Examples of the taste wanted: " + ", ".join(v) + "."),
+)
 
 
 class PromptError(ValueError):
@@ -255,6 +262,9 @@ def _assemble(
     ctx["already_this_run"] = "\n".join(already)
     ctx["unmet"] = unmet_text
     parts = [_render(template, ctx)]
+    for name, fmt in _EXTRAS:
+        if name not in referenced and ctx[name]:
+            parts.append(fmt(ctx[name]))
     for name in _APPENDABLE:
         if name not in referenced and ctx[name]:
             parts.append(ctx[name])

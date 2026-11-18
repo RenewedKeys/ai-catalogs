@@ -86,7 +86,31 @@ def test_seed_drives_category_and_anchor_shuffle():
     assert one == two
     assert one.split("|")[0] == ",".join(seeded_shuffle(cats, SEED, "categories"))
     other = render_prompt({"prompt": "{{ categories|join(',') }}", **defn}, today=DAY, seed="ffff0000ffff0000").text
-    assert sorted(other.split(",")) == sorted(cats)
+    first, rest = other.split("\n\n", 1)  # anchors are not in the template, so they are appended
+    assert sorted(first.split(",")) == sorted(cats)
+    assert rest.startswith("Examples of the taste wanted: ")
+
+
+def test_plain_description_still_gets_focus_categories_and_anchors():
+    defn = {
+        "prompt": "Films for category alpha.",
+        "weekday_focus": {"wednesday": "something light"},
+        "categories": ["alpha", "beta"],
+        "anchors": ["Film 1", "Film 2 (1999)"],
+    }
+    text = render_prompt(defn, today=DAY, seed=SEED).text
+    parts = text.split("\n\n")
+    assert parts[0] == "Films for category alpha."
+    assert parts[1] == "Today's focus: something light"
+    assert parts[2].startswith("Spread the picks across these categories: ") and "alpha" in parts[2]
+    assert parts[3].startswith("Examples of the taste wanted: ") and "Film 2 (1999)" in parts[3]
+
+
+def test_extras_are_not_repeated_when_the_template_places_them():
+    defn = {"prompt": "Focus: {{ focus }}. Mix {{ categories|join('/') }}.", "focus": "f", "categories": ["alpha"]}
+    text = render_prompt(defn, today=DAY, seed=SEED).text
+    assert text.count("Today's focus") == 0 and text.count("Spread the picks") == 0
+    assert text.startswith("Focus: f. Mix alpha.")
 
 
 def test_exclusion_lines_are_capped_and_chunked():

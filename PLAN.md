@@ -1029,3 +1029,42 @@ categories …) and plain-looking; a normal person should only need a name and a
   (build, exact round trip, errors), Refresh now, basic vs advanced placement, a new field
   landing under Advanced, logo present and no signed-in label; the HTML round-trip test reads
   the refresh widget like a browser.
+
+## 27. Pickers, dashboard actions, test-run picks, plain language
+
+Owner feedback on the section 26 editor, all in one change:
+
+- **Dashboard**: drag ⠿ to reorder (`POST /configure/order`, positions only: no new revision,
+  no epoch bump; saving a catalog keeps its dashboard position, a new catalog's `position`
+  is used once); each card has ▶ Run now, ⚗ Test run, Edit and delete (with a confirm). The
+  logo is bigger, with a GitHub link in the top bar.
+- **No YAML tab** on the page (the server still accepts `mode=yaml`; `export.yaml` stays).
+  `position` and `blacklist_tmdb_ids` are no longer on the page (`editor.FORM_HIDDEN`); a stored
+  value is carried over on save.
+- **Pickers** (`editor.WIDGETS`, `templates/admin/admin.js`): each enhances the existing field and
+  writes back the format the server already parses (one value per line, or JSON read as YAML),
+  so a form without JavaScript still works and an untouched save keeps `config_rev`. Languages
+  and genres from fixed lists (names, not codes or ids); Never include and Example movies search
+  TMDB (`GET /configure/suggest?kind=movie|collection|company|keyword|model&q=`, behind the
+  editor's auth, errors become an empty list); franchises/studios/keywords for
+  `franchise_denylist`; one box per weekday; decade and theme minimums as rows; the AI model
+  from the provider's `GET /models` (cached an hour).
+- **Plain descriptions get every setting**: `render_prompt` now appends focus (per weekday),
+  categories and anchors when the template does not place them, like the limit blocks. Before,
+  they were silently ignored by a template-free description.
+- **Labels and help** rewritten (`LABELS`, `HELP`, `OPTION_LABELS`), "catalog/version/movies"
+  used consistently, slider ranges sized for people (`UI_BOUNDS`: years 1900 to next year,
+  length up to 240, repeat window up to 30 …). Page notices are short ("Saved."), and validation
+  errors are translated to on-page labels (`admin.friendly_error`).
+- **Check vs test**: 👁 Preview (free: renders the request, no AI call) in the save bar with
+  Cancel; ⚗ Test run (calls the AI with the saved settings, publishes nothing) and ▶ Run now at
+  the top of the catalog and on its card, each with a one-line explanation.
+- **Test runs keep their picks**: migration 6 adds `runs.preview_json`
+  (`[[title, year, imdb_id], ...]`, dry runs only); the Activity tab shows them as a numbered
+  grid, and each version under Versions can show its movies. Run details are plain phrases
+  ("2 AI requests · 1,900 tokens sent, 2,700 received").
+- Not done here, proposed separately: series (TV shows) next to movies; publishing a ready-built
+  container image with numbered releases.
+- **Fewer calls per run**: `pipeline.batch_sizes` folds a remainder under a third of a batch into
+  the other calls and splits evenly (64 -> one call instead of 60 + 4; 160 -> 54/53/53). Calls
+  stay under 80 movies, well within the default `max_tokens`.
