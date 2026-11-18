@@ -534,9 +534,11 @@ BASIC_FIELDS = (
     "exclude_watched",
     "blacklist_titles",
 )
-# Not on the page at all (the dashboard orders catalogs; "Never include" covers TMDB ids).
-# A stored value is kept on save.
-FORM_HIDDEN = frozenset({"position", "blacklist_tmdb_ids"})
+# Not on the page at all: the dashboard orders catalogs, "Never include" covers TMDB ids, and the
+# prompt-size knobs are internal tuning with defaults that fit everyone. A stored value is kept on save.
+FORM_HIDDEN = frozenset(
+    {"position", "blacklist_tmdb_ids", "history_prompt_limit", "watched_prompt_limit", "max_prompt_chars"}
+)
 
 LABELS = {
     "name": "Name",

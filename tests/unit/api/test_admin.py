@@ -1194,7 +1194,9 @@ def test_slider_ranges_are_sensible():
     assert by_name["year_min"].minimum == 1900 and by_name["year_min"].maximum <= 2100
     assert by_name["min_runtime"].maximum == 240
     adv = {f.name: f for _, fs in editor.advanced_groups() for f in fs}
-    assert adv["history_window_runs"].maximum == 30 and not adv["max_prompt_chars"].slider
+    assert adv["history_window_runs"].maximum == 30
+    for name in ("history_prompt_limit", "watched_prompt_limit", "max_prompt_chars"):
+        assert name not in adv  # internal tuning: not on the page
 
 
 @pytest.mark.parametrize(
@@ -1227,3 +1229,12 @@ def test_top_bar_shows_the_version(client):
     from app import __version__
 
     assert f">v{__version__}</a>" in client.get("/configure/").text
+
+
+def test_internal_prompt_knobs_are_hidden_but_kept(client):
+    rev = add_catalog(history_prompt_limit=40, max_prompt_chars=9000)
+    page = client.get("/configure/catalogs/alpha_list").text
+    assert 'name="history_prompt_limit"' not in page and 'name="max_prompt_chars"' not in page
+    vals = {k: v for k, v in values_for({"prompt": PROMPT}).items() if k not in editor.FORM_HIDDEN}
+    r = post_form(client, "/configure/catalogs/alpha_list/save", vals, base_rev=rev, action="save")
+    assert r.status_code == 303 and catalog_row("alpha_list")["config_rev"] == rev
