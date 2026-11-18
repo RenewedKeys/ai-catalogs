@@ -114,7 +114,7 @@ class CatalogDefinition(BaseModel):
 
     # Run shape
     target_count: int = Field(default=100, ge=1, le=MAX_ITEMS)
-    overgenerate_factor: float = Field(default=1.6, ge=1.0, le=5.0)
+    overgenerate_factor: float = Field(default=2.0, ge=1.0, le=5.0)
     history_window_runs: int = Field(default=7, ge=0, le=1000)
     history_mode: Literal["strict", "relax"] = "strict"
     on_shortfall: Literal["fail", "publish_partial"] = "fail"
@@ -125,8 +125,6 @@ class CatalogDefinition(BaseModel):
 
     @model_validator(mode="after")
     def _consistent(self):
-        if self.on_shortfall == "publish_partial" and self.min_accept is None:
-            raise ValueError("on_shortfall: publish_partial needs min_accept")
         if self.min_accept is not None and self.min_accept > self.target_count:
             raise ValueError("min_accept must not be greater than target_count")
         if self.type == SERIES:

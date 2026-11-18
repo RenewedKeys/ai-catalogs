@@ -166,7 +166,7 @@ def test_validate_dir_writes_nothing(tmp_path):
         ("released: 2020-01-01\n", "plain text"),
         ("target_count: 0\n", "target_count"),
         ("target_count: 300\n", "target_count"),
-        ("on_shortfall: publish_partial\n", "min_accept"),
+        ("on_shortfall: publish_partial\nmin_accept: 200\ntarget_count: 100\n", "min_accept"),
         ("decade_min: {1980: 60, 1990: 60}\n", "decade_min asks for 120"),
         ("year_min: 2000\ndecade_min: {1980: 5}\n", "outside year_min"),
         ("history_mode: loose\n", "history_mode"),

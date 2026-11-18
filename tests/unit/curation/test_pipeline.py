@@ -78,10 +78,10 @@ async def test_happy_path_publishes_exactly_100_unique():
     assert len(published) == 100 and len(set(published)) == 100
     run = last_run()
     assert run["status"] == "ok" and run["seed"] and run["prompt_hash"]
-    assert run["model_calls"] == 3  # 160 requested in batches of 60, 60, 40
-    assert services.llm.calls == 3
+    assert run["model_calls"] == 4  # 200 requested in batches of 50
+    assert services.llm.calls == 4
     counts = json.loads(run["stage_counts_json"])
-    assert counts["generated"] == 160 and counts["eligible"] == 160 and counts["selected"] == 100
+    assert counts["generated"] == 200 and counts["eligible"] == 200 and counts["selected"] == 100
     with db.session() as conn:
         assert conn.execute("SELECT COUNT(*) FROM history").fetchone()[0] == 100
         job = conn.execute("SELECT state FROM jobs").fetchone()
@@ -212,7 +212,7 @@ async def test_topup_shortfall_is_computed_after_selection():
     assert services.llm.calls > 3
     published = [int(i[2:]) - 1_000_000 for i in active_ids()]
     assert sum(1 for n in published if n <= 120) == 1
-    assert "STILL NEEDED" in services.llm.prompts[3]
+    assert "STILL NEEDED" in services.llm.prompts[4]
 
 
 async def test_hard_decade_quota_steers_topups_and_is_met():

@@ -654,13 +654,13 @@ HELP = {
     "category_min": 'Guarantee some movies for a theme from "Themes to spread the picks across". '
     "Best effort: a refresh still publishes if it can't.",
     "overgenerate_factor": "Some suggestions get rejected by your rules, so the AI is asked for more than "
-    "needed. 1.6 asks for 64 to fill 40. Default 1.6.",
+    "needed. 2 asks for 80 to fill 40. Default 2.",
     "history_window_runs": "Movies from the last few versions of this catalog are not picked again. "
     "Default 7: with a daily refresh, nothing repeats within a week.",
-    "history_mode": "",
-    "on_shortfall": "",
-    "min_accept": 'Only used with "Publish what was found": a refresh that finds fewer movies than this keeps '
-    "the previous version instead.",
+    "history_mode": "If the AI runs out of new movies: skip repeats, or let the oldest ones back in.",
+    "on_shortfall": "If a refresh finds fewer movies than you asked for: keep the current list, or use the "
+    "shorter one.",
+    "min_accept": 'With "Publish what was found": never publish fewer than this. Any: no minimum.',
     "max_model_calls_per_run": "A run asks the AI once (big catalogs: a few times, about 60 movies per ask). If too "
     'many suggestions fail your rules, it asks again for more: those are the "extra rounds to fill gaps" in a '
     "run's details. This caps all of them per run. Default 8; a typical run uses 1 or 2.",
@@ -677,7 +677,7 @@ HELP = {
 OPTION_LABELS = {
     "type": {"movie": "Movies", "series": "Shows"},
     "history_mode": {
-        "strict": "Keep the previous version (never repeat)",
+        "strict": "Never repeat",
         "relax": "Allow the oldest repeats back in",
     },
     "on_shortfall": {
