@@ -320,3 +320,16 @@ async def test_a_shows_catalog_test_runs_and_publishes_series(_llm_key):
     assert len(metas) == 5 and {m["type"] for m in metas} == {"series"}
     assert all(m["name"].startswith("Show ") and m["id"].startswith("tt") for m in metas)
     assert len(preview) == 5 and preview[0][0].startswith("Show ")
+
+
+def test_rollback_serves_each_list_as_the_type_it_was_built_for():
+    from app.store.maintenance import rollback
+
+    with db.session() as conn, db.transaction(conn):
+        rev = accept_definition(conn, "c", "C", series())
+        first = publish_snapshot(conn, "c", _items("series"), config_rev=rev).snapshot_id
+        publish_snapshot(conn, "c", _items("series", 10), config_rev=rev)
+    with db.session() as conn:
+        rollback(conn, "c", first)
+        assert servable_catalogs(conn)[0].media_type == "series"
+        assert [m["name"] for m in active_metas(conn, "c", "series")] == ["Show 1", "Show 2", "Show 3"]
