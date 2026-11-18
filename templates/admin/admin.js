@@ -300,7 +300,8 @@
   if (layout) {
     var links = Array.prototype.slice.call(layout.querySelectorAll(".sidenav a[data-panel]"));
     var panels = Array.prototype.slice.call(layout.querySelectorAll(".panel"));
-    var storeKey = "panel:" + window.location.pathname;
+    // A Preview or a failed save renders at .../save: remember the panel per catalog, not per URL.
+    var storeKey = "panel:" + window.location.pathname.replace(/\/save\/?$/, "");
     var ALIASES = { "#activity-tab": "p-runs", "#runs": "p-runs", "#form-tab": "p-catalog" };
     function panelFor(hash) {
       if (!hash) return null;
@@ -339,6 +340,10 @@
       window.scrollTo(0, 0);
       window.addEventListener("load", function () { setTimeout(function () { window.scrollTo(0, 0); }, 0); });
     }
+    window.addEventListener("hashchange", function () {  // back / forward, or a typed #section
+      var id = panelFor(location.hash);
+      if (id) openPanel(id, false);
+    });
     // A required field in a hidden panel would block saving without a word: show its panel.
     var settingsForm = document.getElementById("form-tab");
     if (settingsForm) {

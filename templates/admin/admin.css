@@ -88,10 +88,9 @@ button, .button {
   background: var(--fg); color: #09090b; cursor: pointer; white-space: nowrap;
   transition: transform .08s ease, background .15s ease, color .15s ease, border-color .15s ease;
 }
-button:hover, .button:hover { background: #e4e4e7; color: #09090b; }
+button:where(:not(:disabled)):hover, .button:hover { background: #e4e4e7; color: #09090b; }
 button:active, .button:active { transform: translateY(1px); }
 button:disabled { opacity: .4; cursor: not-allowed; }
-button:disabled:hover { background: var(--fg); }
 .secondary, button.secondary {
   background: transparent; border-color: var(--line-strong); color: var(--fg); box-shadow: none;
 }
@@ -360,7 +359,7 @@ button.small .ico, .button.small .ico { width: 14px; height: 14px; }
 .list-tools { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 .filter { display: inline-flex; background: #0e0e11; border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 2px; }
 .filter-btn { background: transparent; border: 0; box-shadow: none; color: var(--muted); font-size: 13px; padding: 5px 12px; border-radius: 7px; }
-.filter-btn:hover { color: var(--fg); filter: none; }
+.filter-btn:hover, .filter-btn:not(:disabled):hover { color: var(--fg); background: rgba(255,255,255,.05); filter: none; }
 .filter-btn.active { background: var(--surface-2); color: var(--fg); }
 .rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
 .row-item { border-top: 1px solid var(--line); background: transparent; }
@@ -493,8 +492,7 @@ button.small .ico, .button.small .ico { width: 14px; height: 14px; }
 @media (max-width: 720px) {
   .addon-bar { flex-direction: column; align-items: flex-start; }
   .addon-logo { width: 52px; height: 52px; }
-  .cat { grid-template-columns: auto 1fr; padding: 14px; }
-  .cat .grip { display: none; }
+  .cat { grid-template-columns: auto auto 1fr; padding: 14px 14px 14px 6px; }
   .cat-actions { grid-column: 1 / -1; flex-wrap: wrap; }
   .page-head .row-start:last-child { width: 100%; }
 }
