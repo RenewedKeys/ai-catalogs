@@ -77,7 +77,7 @@ def worker_healthy(conn: sqlite3.Connection, now: int, hostname: Optional[str] =
     return True, f"worker holds the lease (last heartbeat {age}s ago)"
 
 
-def _catalog(conn: sqlite3.Connection, row: sqlite3.Row, now: int) -> dict[str, Any]:
+def _catalog(conn: sqlite3.Connection, row: sqlite3.Row, now: int, runs_limit: int = RECENT_RUNS) -> dict[str, Any]:
     cid = row["catalog_id"]
     try:
         schedule = schedule_of(_json(row["definition_json"]) or {})
@@ -99,7 +99,7 @@ def _catalog(conn: sqlite3.Connection, row: sqlite3.Row, now: int) -> dict[str, 
                model_calls, tokens_in, tokens_out, relaxed_window, repeats, error_category, error_status
         FROM runs WHERE catalog_id = ? ORDER BY id DESC LIMIT ?
         """,
-        (cid, RECENT_RUNS),
+        (cid, runs_limit),
     ).fetchall()
     return {
         "catalog_id": cid,
@@ -154,13 +154,15 @@ def _catalog(conn: sqlite3.Connection, row: sqlite3.Row, now: int) -> dict[str, 
     }
 
 
-def catalog_status(conn: sqlite3.Connection, catalog_id: str, now: int) -> Optional[dict[str, Any]]:
-    """One catalog's entry of ``collect_status`` (the /configure catalog page)."""
+def catalog_status(
+    conn: sqlite3.Connection, catalog_id: str, now: int, runs_limit: int = RECENT_RUNS
+) -> Optional[dict[str, Any]]:
+    """One catalog's entry of ``collect_status`` (the /configure catalog page asks for more runs)."""
     row = conn.execute(
         "SELECT catalog_id, name, state, source, last_error, definition_json FROM catalog_defs WHERE catalog_id = ?",
         (catalog_id,),
     ).fetchone()
-    return _catalog(conn, row, now) if row else None
+    return _catalog(conn, row, now, runs_limit) if row else None
 
 
 def collect_status(conn: sqlite3.Connection, now: int, db_path: Optional[str] = None) -> dict[str, Any]:

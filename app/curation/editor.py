@@ -19,8 +19,10 @@ on TMDB (a failure means nothing is saved), then ``accept_definition`` with ``so
 """
 
 import io
+import os
 import json
 from datetime import date
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 import types
 import typing
@@ -878,7 +880,7 @@ def schedule_from_form(form: Mapping[str, Optional[str]], base: Any) -> Any:
         raise DefinitionError("refresh: choose manually, every day, every week or custom")
     if mode == "manual":
         return _MISSING
-    tz = (form.get("sched_tz") or "").strip() or "UTC"
+    tz = (form.get("sched_tz") or "").strip() or server_timezone_name()
     if mode == "custom":
         cron = " ".join((form.get("sched_cron") or "").split())
         if not cron:
@@ -905,6 +907,18 @@ def schedule_from_form(form: Mapping[str, Optional[str]], base: Any) -> Any:
         if same_tz and same_cron:
             return dict(base)
     return value
+
+
+def server_timezone_name() -> str:
+    """The server's IANA zone from TZ (as the compose template sets it), else UTC."""
+    name = (os.environ.get("TZ") or "").strip().lstrip(":")
+    if not name:
+        return "UTC"
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return "UTC"
+    return name
 
 
 def catalog_id_for(name: str, taken: set[str]) -> str:

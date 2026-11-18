@@ -33,6 +33,8 @@ Without a session: GET -> redirect to the login page, anything else -> 401, for 
 """
 
 import base64
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import hashlib
 import hmac
 import json
@@ -72,6 +74,8 @@ LOGIN_WINDOW_MS = 15 * 60 * 1000
 LOGIN_MAX_PER_CLIENT = 5
 LOGIN_MAX_TOTAL = 20
 SNAPSHOTS_SHOWN = 20
+RUNS_SHOWN = 30  # the Activity tab lists this many; the newest few are visible, the rest behind "Show older"
+FIRST_SHOWN = 5
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates" / "admin"
 STATIC_FILES = {"admin.js": "text/javascript", "admin.css": "text/css"}
@@ -236,12 +240,80 @@ def _form_kind(form: Mapping[str, Any], mode: str, base: Mapping[str, Any]) -> s
     return media.media_type(base)
 
 
+def ago(value: Any, now: Optional[datetime] = None) -> str:
+    """'2026-11-17T23:12:55Z' -> '5 min ago' / '3 h ago' / 'yesterday' / '12 Nov'."""
+    try:
+        then = datetime.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return when(value)
+    seconds = int(((now or datetime.now(timezone.utc)) - then).total_seconds())
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{seconds // 60} min ago"
+    if seconds < 86400:
+        return f"{seconds // 3600} h ago"
+    if seconds < 2 * 86400:
+        return "yesterday"
+    if seconds < 7 * 86400:
+        return f"{seconds // 86400} days ago"
+    return then.strftime("%-d %b")
+
+
 def when(value: Any) -> str:
-    """'2026-11-17T23:12:55Z' -> '2026-11-17 23:12 UTC'."""
+    """'2026-11-17T23:12:55Z' -> '2026-11-17 18:12 EST' in the server's TZ (UTC when unset)."""
     text = str(value or "")
-    if len(text) >= 16 and text[10] == "T":
-        return f"{text[:10]} {text[11:16]} UTC"
-    return text
+    try:
+        moment = datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return text
+    local = moment.astimezone(ZoneInfo(editor.server_timezone_name()))
+    return local.strftime("%Y-%m-%d %H:%M ") + (local.tzname() or "")
+
+
+# Why a run failed, in plain words, with what to do about it. Keys are the controlled
+# runs.error_category values; anything else falls back to the raw code.
+RUN_ERRORS = {
+    "shortfall": (
+        "Couldn't find enough that fit all your rules",
+        "Loosen a rule (often minimum number of ratings or minimums per decade), or set "
+        '"When a refresh comes up short" to "Publish what was found". The current version stays.',
+    ),
+    "budget": (
+        "Stopped by the AI request limit",
+        'The daily AI limit or this catalog\'s "Most AI requests per run" was reached. Try again later or '
+        "raise the limit.",
+    ),
+    "config": ("A setting needs fixing", "Open Settings, press Preview and fix what it reports."),
+    "assertion": ("Something went wrong inside the app", "Run it again; if it keeps happening, check the logs."),
+    "timeout": ("The AI took too long to answer", 'Run it again, or raise "Give up on the AI after".'),
+    "transport": ("Couldn't reach the AI provider", "Check the server's internet connection and try again."),
+    "output_invalid": (
+        "The AI's answer couldn't be read",
+        "Try again, or pick a different AI model under Advanced settings.",
+    ),
+    "provider_auth": ("The AI key was refused", "Check OPENAI_API_KEY / GEMINI_API_KEY on the server."),
+    "provider_payment": ("The AI account is out of credit", "Top up your OpenRouter or Google account."),
+    "provider_rate_limit": ("The AI provider is busy (rate limit)", "Wait a little and try again."),
+    "provider_http_5xx": ("The AI provider had an error", "Wait a little and try again."),
+    "provider_http_4xx": (
+        "The AI provider rejected the request",
+        "Check the AI model name under Advanced settings.",
+    ),
+    "mdblist_auth": ("Your MDBList key was refused", "Check MDBLIST_API_KEY on the server."),
+    "mdblist_rate_limit": ("MDBList is busy (rate limit)", "Wait a little and try again."),
+    "mdblist_timeout": ("MDBList took too long to answer", "Try again."),
+    "mdblist_transport": ("Couldn't reach MDBList", "Check the server's internet connection and try again."),
+    "mdblist_schema": ("MDBList answered in an unexpected way", "Try again later."),
+    "lost_lease": ("Interrupted by a restart", "Run it again."),
+}
+
+
+def run_error(run: dict[str, Any]) -> tuple[str, str]:
+    category = run.get("error_category") or ""
+    if category in RUN_ERRORS:
+        return RUN_ERRORS[category]
+    return (category.replace("_", " ").capitalize() or "Failed", "")
 
 
 def run_kind(run: dict[str, Any]) -> str:
@@ -550,7 +622,7 @@ def _load(catalog_id: str) -> Optional[dict[str, Any]]:
             return None
         out = dict(row)
         out["definition"] = json.loads(row["definition_json"])
-        out["status"] = catalog_status(conn, catalog_id, db.now_ms())
+        out["status"] = catalog_status(conn, catalog_id, db.now_ms(), runs_limit=RUNS_SHOWN)
         run_ids = [r["id"] for r in out["status"]["recent_runs"]]
         previews = {}
         if run_ids:
@@ -637,11 +709,19 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
     admin.state.tmdb_client_factory = tmdb_client_factory or TMDBClient
     env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=select_autoescape(default=True))
     env.filters["when"] = when
+    env.filters["ago"] = ago
+    env.globals["first_shown"] = FIRST_SHOWN
     env.filters["say"] = editor.say
     from app import __version__
 
     env.globals["version"] = __version__
-    env.globals.update(run_kind=run_kind, run_status=run_status, reject_label=reject_label, run_details=run_details)
+    env.globals.update(
+        run_error=run_error,
+        run_kind=run_kind,
+        run_status=run_status,
+        reject_label=reject_label,
+        run_details=run_details,
+    )
 
     def page(request: Request, template: str, status_code: int = 200, **context) -> HTMLResponse:
         sess = getattr(request.state, "session", None)

@@ -332,6 +332,42 @@
     try { box.value = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { /* UTC */ }
   });
 
+  // ---------------------------------------------------------------- one-time notices
+  // "?msg=..." shows a notice once: drop it from the address so a reload or the automatic refresh
+  // after a run doesn't bring it back, and fade the notice out after a few seconds.
+  if (/[?&]msg=/.test(window.location.search) && history.replaceState) {
+    history.replaceState(null, "", window.location.pathname + window.location.hash);
+  }
+  document.querySelectorAll(".notice.flash").forEach(function (n) {
+    setTimeout(function () { n.classList.add("gone"); }, 6000);
+    setTimeout(function () { n.remove(); }, 6600);
+  });
+
+  // ---------------------------------------------------------------- run and version lists
+  var filterBtns = document.querySelectorAll(".filter-btn");
+  filterBtns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var kind = btn.getAttribute("data-filter");
+      filterBtns.forEach(function (b) { b.classList.toggle("active", b === btn); });
+      document.querySelectorAll("#run-rows .run-row").forEach(function (row) {
+        row.classList.toggle("filtered-out", kind !== "all" && row.getAttribute("data-kind") !== kind);
+      });
+      var older = document.querySelector('[data-show-older="run-rows"]');
+      if (kind !== "all") {  // a filter shows every matching run, older ones included
+        document.querySelectorAll("#run-rows .older").forEach(function (r) { r.classList.add("shown"); });
+        if (older) older.hidden = true;
+      }
+    });
+  });
+  document.querySelectorAll("[data-show-older]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.querySelectorAll("#" + btn.getAttribute("data-show-older") + " .older").forEach(function (r) {
+        r.classList.add("shown");
+      });
+      btn.hidden = true;
+    });
+  });
+
   // ---------------------------------------------------------------- copy, confirm, cancel
   document.querySelectorAll("button[data-copy]").forEach(function (button) {
     button.addEventListener("click", function () {
@@ -466,7 +502,11 @@
       fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (st) {
-          if (st && !st.open_job) { clearInterval(timer); window.location.hash = "#activity-tab"; window.location.reload(); }
+          if (st && !st.open_job) {
+            clearInterval(timer);
+            history.replaceState(null, "", window.location.pathname + "#activity-tab");
+            window.location.reload();
+          }
         })
         .catch(function () {});
     }, 5000);
