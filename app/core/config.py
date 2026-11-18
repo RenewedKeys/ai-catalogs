@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # Application settings
     APP_NAME: str = Field(default="AI Catalogs")
     APP_VERSION: str = Field(default=__version__)
-    APP_DESCRIPTION: str = Field(default="Curated, daily-rotating AI catalogs for Stremio")
+    APP_DESCRIPTION: str = Field(default="Movie catalogs you describe in plain words, kept fresh by AI")
     PUBLIC_BASE_URL: str | None = Field(
         default=None, description="Externally reachable base URL, e.g. https://catalogs.example.org (no trailing slash)"
     )

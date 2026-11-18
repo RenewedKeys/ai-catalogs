@@ -98,7 +98,7 @@ jobs:
             type=raw,value=latest,enable=${{ steps.version.outputs.is_latest }}
           labels: |
             org.opencontainers.image.title=AI Catalogs
-            org.opencontainers.image.description=AI-curated movie catalogs for Stremio and AIOMetadata
+            org.opencontainers.image.description=Describe the movies you want; AI keeps a fresh catalog of them (via AIOMetadata)
             org.opencontainers.image.licenses=MIT
 
       - name: Build and push (amd64, arm64)
