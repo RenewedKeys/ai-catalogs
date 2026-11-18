@@ -388,3 +388,5 @@ details.inline-picks > summary { font-size: 13px; }
   .hero-logo { width: 72px; height: 72px; }
   .gh span { display: none; }
 }
+.version { color: var(--faint); font-size: 12px; font-weight: 600; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; }
+.version:hover { color: var(--fg); border-color: var(--line-strong); }

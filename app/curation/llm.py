@@ -326,6 +326,8 @@ def _key_kind(key: str | None) -> str:
         return "no key is set"
     if key.startswith("sk-or-"):
         return "the key looks like an OpenRouter key"
+    if key.startswith("AIza"):
+        return "the key looks like a Google AI Studio (Gemini) key"
     if key.startswith("sk-"):
         return "the key looks like an OpenAI-style key"
     return "the key has an unrecognised format"

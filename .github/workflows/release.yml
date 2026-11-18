@@ -1,0 +1,134 @@
+name: Release
+
+# A release is a version tag on main: `git tag v1.2.3 && git push origin v1.2.3`.
+# This builds the image for amd64 and arm64, pushes it to GHCR as
+#   ghcr.io/<owner>/ai-catalogs:1.2.3, :1.2, :1 and :latest (latest only for the newest version)
+# and then publishes the GitHub release with notes generated from the merged pull requests.
+# Bump __version__ in app/__init__.py in the pull request first: the tag must match it.
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Existing release tag to rebuild, e.g. v1.2.3"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  image:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED: ${{ inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag="v${REQUESTED#v}"
+          version="${tag#v}"
+          if ! [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error title=Version::'$REQUESTED' is not a release tag like v1.2.3"
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"
+          # `latest` only goes to the highest version, so rebuilding an old one never moves it back.
+          highest="$(git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" 'v*' \
+            | sed -E 's#.*refs/tags/v##; s#\^\{\}##' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          is_latest=false
+          if [ -z "$highest" ] || [ "$(printf '%s\n%s\n' "$version" "$highest" | sort -V | tail -1)" = "$version" ]; then
+            is_latest=true
+          fi
+          echo "Building $version (highest tag: ${highest:-none}, latest: $is_latest)"
+          {
+            echo "tag=$tag"; echo "version=$version"; echo "major=$major"; echo "minor=$minor"; echo "is_latest=$is_latest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out the tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+
+      - name: Tag matches app version
+        run: |
+          app_version="$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+?)\"", open("app/__init__.py").read()).group(1))')"
+          if [ "$app_version" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error title=Version::app/__init__.py says $app_version but the tag is ${{ steps.version.outputs.tag }}"
+            exit 1
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ steps.version.outputs.major }}.${{ steps.version.outputs.minor }}
+            type=raw,value=${{ steps.version.outputs.major }}
+            type=raw,value=latest,enable=${{ steps.version.outputs.is_latest }}
+          labels: |
+            org.opencontainers.image.title=AI Catalogs
+            org.opencontainers.image.description=AI-curated movie catalogs for Stremio and AIOMetadata
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push (amd64, arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Publish GitHub release
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release (or keep an existing one)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.image.outputs.version }}
+          VERSION: ${{ needs.image.outputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; image rebuilt only."
+            exit 0
+          fi
+          notes="$(printf 'Image: `ghcr.io/%s:%s` (also `:latest`)\n\nUpdate: `docker compose pull && docker compose up -d`\n' \
+            "$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" "$VERSION")"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$notes" --generate-notes --verify-tag

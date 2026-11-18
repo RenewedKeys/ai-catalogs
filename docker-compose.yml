@@ -1,3 +1,6 @@
+# Builds from source (development, CI). To run a release, use the image-based compose file in
+# README.md ("Self-hosting"): ghcr.io/renewedkeys/ai-catalogs.
+#
 # Two services from one locally built image:
 #   web     serves HTTP: the addon routes, and the editor at /configure when ENABLE_EDITOR=true
 #   worker  runs the scheduler: schedules, catch-up, recovery, nightly backups (PLAN.md section 11)
