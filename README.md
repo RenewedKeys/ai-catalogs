@@ -166,6 +166,18 @@ addons: that protects the configuration page and keeps the addon link reachable 
 With Cloudflare DDNS, add the hostname to its `DOMAINS` too. The [setup guide](docs/setup.md) has
 every setting.
 
+## Add your catalogs to AIOMetadata
+
+1. In AI Catalogs, copy the addon link from the top of the catalog list.
+2. In AIOMetadata's configure page, open **Catalogs** and click **Quick Add**. Paste the link and
+   load it. (Not *Import Setup*: that is for AIOMetadata's own exported settings and answers
+   "Unsupported export version".)
+3. Tick the catalogs you want (movie catalogs come in as Movie, show catalogs as Series), set
+   their cache TTL to 1-2 hours, and **Save**.
+
+A catalog appears there only after its first run, so press **Run now** once before importing.
+After adding a catalog, or switching one between movies and shows, do Quick Add again.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

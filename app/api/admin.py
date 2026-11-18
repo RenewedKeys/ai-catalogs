@@ -92,7 +92,7 @@ SECURITY_HEADERS = {
 NOTICES = {
     "saved": "Saved.",
     "type_changed": (
-        "Saved. This catalog switched between movies and shows: re-import the addon in AIOMetadata so it "
+        "Saved. This catalog switched between movies and shows: add the addon again with Quick Add in AIOMetadata so it "
         "uses the new type. The previous list keeps showing until the first new one is published."
     ),
     "created": "Catalog created.",

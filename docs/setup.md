@@ -171,9 +171,12 @@ it up as files); the database is the full state (published lists, history, runs,
 
 ## Add it to AIOMetadata
 
-Import `<PUBLIC_BASE_URL>/c/<ADDON_ACCESS_TOKEN>/manifest.json` (or `/c/public/...` without a
-token) in AIOMetadata's Custom Manifest Integration and set the catalog's cache TTL to 1-2
-hours, so a new daily list shows up within that time instead of up to 24 hours later.
+In AIOMetadata's configure page, open **Catalogs**, click **Quick Add** and paste
+`<PUBLIC_BASE_URL>/c/<ADDON_ACCESS_TOKEN>/manifest.json` (or `/c/public/...` without a token;
+the editor's catalog list shows the exact link). Tick the catalogs, set their cache TTL to 1-2
+hours, so a new daily list shows up within that time instead of up to 24 hours later, and Save.
+Don't use **Import Setup**: it loads AIOMetadata's own exported settings and rejects the addon
+manifest with "Unsupported export version".
 
 The manifest id, catalog ids, token and base URL are frozen into AIOMetadata's config at
 import; changing any of them means importing again. A catalog only appears in the manifest
