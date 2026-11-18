@@ -69,7 +69,7 @@
       </form>
       <span class="tool-sep" aria-hidden="true"></span>
       <a class="icon-btn" href="{{ href }}" title="Edit" aria-label="Edit {{ c.name }}">{{ icon("edit") }}</a>
-      <form method="post" action="{{ href }}/state" class="inline" data-confirm="Delete “{{ c.name }}”? It disappears from your apps.">
+      <form method="post" action="{{ href }}/state" class="inline" data-confirm-ok="Delete" data-confirm="Delete “{{ c.name }}”? It disappears from your apps.">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="base_rev" value="{{ c.config_rev }}">
         <button type="submit" name="state" value="removed" class="icon-btn danger-text" title="Delete" aria-label="Delete {{ c.name }}">{{ icon("trash") }}</button>
