@@ -581,7 +581,8 @@ LABELS = {
 
 HELP = {
     "prompt": "Describe the movies you want: mood, genres, era, style, what you love about them. "
-    "Leave out counts, dates, ratings and exclusions: set those below and they're added for you.",
+    "Leave out counts, dates, ratings and exclusions: set those below and they're added for you. "
+    "Naming example movies is fine; to keep them out of the catalog, add them to Never include.",
     "target_count": "How many movies each refresh puts in the catalog. Up to 250.",
     "min_vote_average": "TMDB rating, 0 to 10. Empty: any rating.",
     "min_vote_count": "Leaves out obscure movies with only a handful of ratings. Empty: any.",
