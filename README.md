@@ -21,6 +21,25 @@ Catalogs are served through [AIOMetadata](https://github.com/cedya77/aiometadata
 up in Stremio and the other apps AIOMetadata works with, like any other catalog. Movies today;
 TV shows are planned.
 
+## What makes it different
+
+Most catalog addons give you filters: a genre, a year range, a rating, a popular list someone
+else made. AI Catalogs gives you a **full prompt**. Whatever you can put into words becomes a
+catalog:
+
+- **Anything you can describe.** Moods ("comfort movies for a sick day"), themes ("heists where
+  the plan goes wrong"), styles ("practical effects, no CGI-heavy blockbusters"), eras, places,
+  vibes, comparisons ("like *Movie A* but darker"), or several of these at once. No tags or genre
+  lists can say that.
+- **Real movies only, and your rules always hold.** The AI only suggests; every movie is checked
+  against TMDB, and your minimum rating, years, length, language and never-include list are
+  enforced by the app itself, not just asked of the AI. Made-up titles and rule-breakers never
+  make it in.
+- **A new catalog every time.** Each run asks again, skips what it showed you recently, and can
+  lean a different way per weekday, so the catalog keeps surprising you instead of going stale.
+- **Your AI, your key.** Use OpenRouter or a Gemini key, pick any model, and cap how many requests
+  it may make.
+
 ## All your catalogs in one place
 
 See every catalog at a glance, drag them into order, run one with a click, and copy the one link
