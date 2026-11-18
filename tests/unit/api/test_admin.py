@@ -569,7 +569,7 @@ async def test_file_catalog_is_read_only_until_moved(client, editor_on, tmdb):
     row = catalog_row("from_file")
     assert row["source"] == "file"
     page = client.get("/configure/catalogs/from_file").text
-    assert "/move-to-editor" in page and '<fieldset class="stack" disabled>' in page
+    assert "/move-to-editor" in page and "<fieldset disabled>" in page
     vals = values_for({"prompt": "Changed"})
     r = post_form(client, "/configure/catalogs/from_file/save", vals, base_rev=row["config_rev"], action="save")
     assert r.status_code == 409 and catalog_row("from_file")["config_rev"] == row["config_rev"]
@@ -916,7 +916,7 @@ def test_list_sizes_are_shown_as_numbers(client):
     pages.append(client.get("/configure/catalogs/alpha_list/rollback/1").text)
     for html in pages:
         assert "built-in method" not in html
-    assert "4 movies" in pages[0]
+    assert "<b>4</b> movies" in pages[0]
     assert "<b>3</b>" in pages[1] and "<b>4</b>" in pages[1]
     assert "3 movies" in pages[2]
 
@@ -1043,7 +1043,8 @@ def test_refresh_now_queues_a_real_refresh(client):
 
 def test_basic_settings_come_first_and_the_rest_is_advanced(client):
     page = client.get("/configure/new").text
-    simple, advanced = page.split('class="advanced"', 1)
+    form = page.split('id="form-tab"', 1)[1]  # past the side menu, which names every section
+    simple, advanced = form.split('<div class="panel" id="p-steering-the-ai">', 1)
     for name in editor.BASIC_FIELDS:
         assert f'name="{name}"' in simple, name
     for name in ("focus", "weekday_focus", "categories", "temperature"):
@@ -1307,12 +1308,32 @@ def test_internal_prompt_knobs_are_hidden_but_kept(client):
 
 
 def test_times_use_the_server_time_zone(monkeypatch):
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 18, tzinfo=timezone.utc)
     monkeypatch.setenv("TZ", "America/New_York")
-    assert admin_mod.when("2026-11-17T23:12:55Z") == "2026-11-17 18:12 EST"
+    assert admin_mod.when("2026-11-17T23:12:55Z", now) == "Nov 17, 6:12 p.m. EST"
     monkeypatch.setenv("TZ", "Not/AZone")
-    assert admin_mod.when("2026-11-17T23:12:55Z") == "2026-11-17 23:12 UTC"
+    assert admin_mod.when("2026-11-17T23:12:55Z", now) == "Nov 17, 11:12 p.m. UTC"
     monkeypatch.delenv("TZ")
-    assert admin_mod.when("2026-11-17T23:12:55Z") == "2026-11-17 23:12 UTC"
+    assert admin_mod.when("2026-11-17T23:12:55Z", now) == "Nov 17, 11:12 p.m. UTC"
+    assert admin_mod.when("2025-03-02T09:05:00Z", now) == "Mar 2, 2025, 9:05 a.m. UTC"  # another year shows it
+
+
+def test_twelve_hour_clock_and_schedule_labels():
+    assert [editor.clock(h, m) for h, m in ((0, 0), (0, 5), (6, 0), (11, 59), (12, 0), (13, 30), (23, 0))] == [
+        "12:00 a.m.",
+        "12:05 a.m.",
+        "6:00 a.m.",
+        "11:59 a.m.",
+        "12:00 p.m.",
+        "1:30 p.m.",
+        "11:00 p.m.",
+    ]
+    assert editor.schedule_label(None) == "Refreshes manually"
+    assert editor.schedule_label({"cron": "0 6 * * *", "timezone": "UTC"}) == "Every day at 6:00 a.m."
+    assert editor.schedule_label({"cron": "30 18 * * 5", "timezone": "UTC"}) == "Every Friday at 6:30 p.m."
+    assert editor.schedule_label({"cron": "*/15 * * * *", "timezone": "UTC"}) == "Custom schedule"
 
 
 def test_relative_times():
@@ -1323,7 +1344,7 @@ def test_relative_times():
     assert admin_mod.ago("2026-11-18T11:55:00Z", now) == "5 min ago"
     assert admin_mod.ago("2026-11-18T09:00:00Z", now) == "3 h ago"
     assert admin_mod.ago("2026-11-17T10:00:00Z", now) == "yesterday"
-    assert admin_mod.ago("2026-11-01T10:00:00Z", now) == "1 Nov"
+    assert admin_mod.ago("2026-11-01T10:00:00Z", now) == "Nov 1"
 
 
 def test_empty_schedule_time_zone_defaults_to_the_server(monkeypatch):

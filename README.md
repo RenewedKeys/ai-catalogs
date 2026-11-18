@@ -58,7 +58,7 @@ syntax needed.
 ## Set your rules
 
 Minimum rating, years, length, language and titles to never include, picked from suggestions as
-you type. Anything that breaks a rule never makes the catalog. Fine-tuning lives under Advanced.
+you type. Anything that breaks a rule never makes the catalog. Each section has its own place in the side menu, with fine-tuning grouped below.
 
 ![Sliders for rating, year and runtime](docs/images/limits.png)
 
