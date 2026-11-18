@@ -463,13 +463,21 @@ def test_rendered_form_round_trips_from_the_html(client):
     data = {}
     for m in re.finditer(r'<input id="f-(\w+)" name="\1"[^>]*?value="([^"]*)"', form_html):
         data[m.group(1)] = m.group(2)
-    for m in re.finditer(r'<input id="f-(\w+)" type="checkbox" name="\1" value="on" checked', form_html):
+    for m in re.finditer(r'<input id="f-(\w+)" type="checkbox"[^>]*name="\1" value="on" checked', form_html):
         data[m.group(1)] = "on"
     for m in re.finditer(r'<textarea id="f-(\w+)" name="\1"[^>]*>\n(.*?)</textarea>', form_html, re.S):
         data[m.group(1)] = m.group(2)
     for m in re.finditer(r'<select id="f-(\w+)" name="\1">(.*?)</select>', form_html, re.S):
         sel = re.search(r'<option value="([^"]*)" selected', m.group(2))
         data[m.group(1)] = sel.group(1) if sel else ""
+    # The refresh widget: the checked radio, its inputs and the weekday select.
+    for m in re.finditer(r'<input[^>]*name="(sched_\w+)" value="([^"]*)"', form_html):
+        if m.group(1) != "sched_mode":
+            data[m.group(1)] = m.group(2)
+    data["sched_mode"] = re.search(r'name="sched_mode" value="(\w+)" checked', form_html).group(1)
+    day = re.search(r'name="sched_day"[^>]*>(.*?)</select>', form_html, re.S).group(1)
+    data["sched_day"] = re.search(r'<option value="(\d)" selected', day).group(1)
+    assert data["sched_mode"] == "daily" and data["sched_tz"] == "Europe/Berlin"
     import html as html_lib
 
     data = {k: html_lib.unescape(v) for k, v in data.items()}
@@ -501,7 +509,7 @@ def test_new_catalog_cannot_overwrite_an_existing_one(client):
 def test_exclusion_names_are_resolved_on_save(client, tmdb):
     vals = values_for({"prompt": PROMPT, "franchise_denylist": {"collections": ["Saga Nine", "Saga Unknown"]}})
     r = post_form(client, "/configure/new", vals, catalog_id="excl", action="validate")
-    assert r.status_code == 200 and "No TMDB match for" in r.text and "Saga Unknown" in r.text
+    assert r.status_code == 200 and "Not found on TMDB" in r.text and "Saga Unknown" in r.text
     r = post_form(client, "/configure/new", vals, catalog_id="excl", action="save")
     assert r.status_code == 303
     resolved = json.loads(catalog_row("excl")["exclusions_json"])
@@ -555,7 +563,7 @@ async def test_file_catalog_is_read_only_until_moved(client, editor_on, tmdb):
     row = catalog_row("from_file")
     assert row["source"] == "file"
     page = client.get("/configure/catalogs/from_file").text
-    assert "Move to editor" in page and "<fieldset disabled>" in page.replace("fieldset disabled", "fieldset disabled")
+    assert "/move-to-editor" in page and '<fieldset class="stack" disabled>' in page
     vals = values_for({"prompt": "Changed"})
     r = post_form(client, "/configure/catalogs/from_file/save", vals, base_rev=row["config_rev"], action="save")
     assert r.status_code == 409 and catalog_row("from_file")["config_rev"] == row["config_rev"]
@@ -566,7 +574,7 @@ async def test_file_catalog_is_read_only_until_moved(client, editor_on, tmdb):
     assert moved["source"] == "editor"
     assert (moved["config_rev"], moved["epoch"]) == (row["config_rev"], row["epoch"])  # no epoch bump
     page = client.get("/configure/catalogs/from_file").text
-    assert "still exists and is ignored" in page
+    assert "is ignored now that this catalog is managed here" in page
 
     # The file is inert now: an edited file is ignored, and so is its removal.
     (editor_on / "from_file.yaml").write_text("prompt: [broken", encoding="utf-8")
@@ -590,15 +598,15 @@ async def test_file_catalog_is_read_only_until_moved(client, editor_on, tmdb):
 def test_dry_run_is_queued_and_its_result_shown(client):
     rev = add_catalog(max_runs_per_day=1)
     r = client.post("/configure/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
-    assert r.status_code == 303 and r.headers["location"].endswith("msg=dry_run_queued")
+    assert r.status_code == 303 and r.headers["location"].endswith("msg=dry_run_queued#activity-tab")
     with db.session() as conn:
         job = conn.execute("SELECT id, kind, state, trigger FROM jobs").fetchone()
     assert (job["kind"], job["state"], job["trigger"]) == ("dry_run", "pending", "admin")
     page = client.get(r.headers["location"]).text
-    assert "Dry run queued" in page and f"Job {job['id']} (dry_run) is pending" in page
+    assert "Test run started" in page and "Test run in progress" in page
     assert client.get("/configure/catalogs/alpha_list/status.json").json()["open_job"]["id"] == job["id"]
     r = client.post("/configure/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
-    assert r.headers["location"].endswith("msg=already_open")
+    assert r.headers["location"].endswith("msg=already_open#activity-tab")
 
     with db.session() as conn, db.transaction(conn):  # the worker ran it
         conn.execute("UPDATE jobs SET state = 'done'")
@@ -610,21 +618,22 @@ def test_dry_run_is_queued_and_its_result_shown(client):
                 job["id"],
                 rev,
                 db.now_ms(),
-                json.dumps({"suggested": 160, "eligible": 104}),
-                json.dumps({"min_vote_average": 21, "<script>": 1}),
+                json.dumps({"generated": 160, "eligible": 104, "selected": 30, "<b>x</b>": 2}),
+                json.dumps({"rating_low": 21, "<script>": 1}),
             ),
         )
     assert client.get("/configure/catalogs/alpha_list/status.json").json()["open_job"] is None
     page = client.get("/configure/catalogs/alpha_list").text
-    assert "suggested: 160" in page and "min_vote_average: 21" in page
-    assert "&lt;script&gt;: 1" in page and "<script>: 1" not in page
+    assert "<b>160</b>suggested" in page and "<b>104</b>passed your rules" in page and "<b>30</b>picked" in page
+    assert "rating too low · 21" in page
+    assert "&lt;script&gt; · 1" in page and "<script> · 1" not in page and "&lt;b&gt;x&lt;/b&gt; 2" in page
 
 
 def test_dry_run_of_a_disabled_catalog_is_refused(client):
     with db.session() as conn, db.transaction(conn):
         accept_definition(conn, "alpha_list", "Alpha", {"prompt": PROMPT}, state="disabled")
     r = client.post("/configure/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
-    assert r.headers["location"].endswith("msg=not_enabled")
+    assert r.headers["location"].endswith("msg=not_enabled#activity-tab")
     with db.session() as conn:
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
 
@@ -649,10 +658,10 @@ def test_rollback_and_refusal(client):
     page = client.get("/configure/catalogs/alpha_list").text
     assert f"/rollback/{ids[0]}" in page and f"/rollback/{ids[2]}" not in page  # active one has no button
     confirm = client.get(f"/configure/catalogs/alpha_list/rollback/{ids[0]}")
-    assert confirm.status_code == 200 and f"Roll back to list {ids[0]}?" in confirm.text
+    assert confirm.status_code == 200 and f"List {ids[0]} (published" in confirm.text
     epoch = catalog_row("alpha_list")["epoch"]
     r = client.post(f"/configure/catalogs/alpha_list/rollback/{ids[0]}", data={"csrf": token(client)})
-    assert r.status_code == 303 and r.headers["location"].endswith("msg=rolled_back")
+    assert r.status_code == 303 and r.headers["location"].endswith("msg=rolled_back#activity-tab")
     assert _active_id() == ids[0] and catalog_row("alpha_list")["epoch"] == epoch + 1
     page = client.get(r.headers["location"]).text
     assert "Rolled back" in page and f"/rollback/{ids[1]}" not in page  # revoked now
@@ -703,7 +712,7 @@ async def test_deleting_an_editor_catalog_releases_its_id_to_a_file(client, edit
     report = await apply_dir(editor_on, tmdb_client_factory=tmdb.client)
     assert [r.status for r in report.files] == ["ignored"]
     page = client.get("/configure/catalogs/alpha_list").text
-    assert "brings the catalog back as a file catalog" in page
+    assert "that file brings the catalog back" in page
     r = client.post(
         "/configure/catalogs/alpha_list/state", data={"csrf": token(client), "state": "removed", "base_rev": rev}
     )
@@ -718,7 +727,7 @@ async def test_deleting_an_editor_catalog_releases_its_id_to_a_file(client, edit
 def test_fixture_catalog_is_read_only_without_a_move_button(client):
     add_catalog(source="fixture")
     page = client.get("/configure/catalogs/alpha_list").text
-    assert "loaded as a fixture" in page and "Move to editor" not in page
+    assert "loaded as a test fixture" in page and "/move-to-editor" not in page
 
 
 def test_missing_tmdb_key_is_a_validation_error(client, app, monkeypatch):
@@ -834,7 +843,7 @@ def test_proxy_mode_signed_in_user_sees_the_editor(proxied):
     add_catalog()
     r = proxied.get("/configure/")
     assert r.status_code == 200
-    assert "Signed in as owner" in r.text
+    assert "Signed in as" not in r.text
     assert "/configure/logout" not in r.text and "password" not in r.text.lower()
     assert proxied.get("/configure/catalogs/alpha_list").status_code == 200
     assert not any(c.startswith(admin_mod.SESSION_COOKIE) for c in r.headers.get_list("set-cookie"))
@@ -901,6 +910,154 @@ def test_list_sizes_are_shown_as_numbers(client):
     pages.append(client.get("/configure/catalogs/alpha_list/rollback/1").text)
     for html in pages:
         assert "built-in method" not in html
-    assert "4 items" in pages[0]
+    assert "4 films" in pages[0]
     assert "<td>3</td>" in pages[1] and "<td>4</td>" in pages[1]
-    assert "3 items" in pages[2]
+    assert "3 films" in pages[2]
+
+
+# --------------------------------------------------------------------------- simple form (PLAN.md section 26)
+
+
+def test_new_catalog_needs_only_a_name_and_a_description(client):
+    page = client.get("/configure/new").text
+    assert 'name="catalog_id"' not in page  # derived from the name
+    r = client.post(
+        "/configure/new",
+        data={
+            "csrf": token(client),
+            "mode": "form",
+            "name": "Sunday Comfort!",
+            "prompt": "Warm, funny films.",
+            "enabled": "on",  # the switch starts on; a browser submits it even with Advanced closed
+            "action": "save",
+        },
+    )
+    assert r.status_code == 303 and r.headers["location"].startswith("/configure/catalogs/sunday_comfort")
+    saved = json.loads(catalog_row("sunday_comfort")["definition_json"])
+    assert saved == {"name": "Sunday Comfort!", "prompt": "Warm, funny films."}
+    # The same name again gets its own id.
+    r = client.post(
+        "/configure/new",
+        data={
+            "csrf": token(client),
+            "mode": "form",
+            "name": "Sunday Comfort",
+            "prompt": "More.",
+            "enabled": "on",
+            "action": "save",
+        },
+    )
+    assert r.headers["location"].startswith("/configure/catalogs/sunday_comfort_2")
+
+
+def test_plain_description_previews_with_list_size_and_rules(client):
+    r = client.post(
+        "/configure/new",
+        data={
+            "csrf": token(client),
+            "mode": "form",
+            "name": "Alpha",
+            "prompt": "Films for category alpha.",
+            "min_runtime": "80",
+            "action": "validate",
+        },
+    )
+    assert r.status_code == 200 and "Looks good" in r.text
+    assert "Films for category alpha." in r.text and "80" in r.text
+
+
+@pytest.mark.parametrize(
+    "widget, expected",
+    [
+        ({"sched_mode": "manual"}, None),
+        (
+            {"sched_mode": "daily", "sched_time": "06:30", "sched_tz": "Europe/Berlin"},
+            {"cron": "30 6 * * *", "timezone": "Europe/Berlin"},
+        ),
+        (
+            {"sched_mode": "weekly", "sched_time": "18:00", "sched_day": "5", "sched_tz": ""},
+            {"cron": "0 18 * * 5", "timezone": "UTC"},
+        ),
+        (
+            {"sched_mode": "custom", "sched_cron": "0  */6 * * *", "sched_tz": "UTC"},
+            {"cron": "0 */6 * * *", "timezone": "UTC"},
+        ),
+    ],
+)
+def test_refresh_widget_builds_the_schedule(client, widget, expected):
+    r = client.post(
+        "/configure/new",
+        data={"csrf": token(client), "mode": "form", "name": "Alpha", "prompt": PROMPT, "action": "save", **widget},
+    )
+    assert r.status_code == 303, r.text[:400]
+    assert json.loads(catalog_row("alpha")["definition_json"]).get("schedule") == expected
+
+
+@pytest.mark.parametrize(
+    "stored, mode",
+    [
+        ({"cron": "0 6 * * *"}, "daily"),
+        ({"cron": "00 06 * * *", "timezone": "UTC"}, "daily"),
+        ({"cron": "15 20 * * 7", "timezone": "Asia/Tokyo"}, "weekly"),
+        ({"cron": "0 6 1 * *", "timezone": "UTC"}, "custom"),
+    ],
+)
+def test_refresh_widget_keeps_a_stored_schedule_exactly(stored, mode):
+    values = editor.schedule_values(stored)
+    assert values["sched_mode"] == mode
+    assert editor.schedule_from_form(values, stored) == stored
+
+
+@pytest.mark.parametrize(
+    "widget, message",
+    [
+        ({"sched_mode": "daily", "sched_time": "25:00"}, "time like 06:00"),
+        ({"sched_mode": "weekly", "sched_time": "06:00", "sched_day": "9"}, "choose a weekday"),
+        ({"sched_mode": "custom", "sched_cron": ""}, "cron expression"),
+        ({"sched_mode": "hourly"}, "choose manually"),
+    ],
+)
+def test_refresh_widget_errors_are_shown(client, widget, message):
+    r = client.post(
+        "/configure/new",
+        data={"csrf": token(client), "mode": "form", "name": "Alpha", "prompt": PROMPT, "action": "save", **widget},
+    )
+    assert r.status_code == 422 and message in r.text and catalog_row("alpha") is None
+
+
+def test_refresh_now_queues_a_real_refresh(client):
+    add_catalog()
+    r = client.post("/configure/catalogs/alpha_list/refresh", data={"csrf": token(client)})
+    assert r.status_code == 303 and r.headers["location"].endswith("msg=refresh_queued#activity-tab")
+    with db.session() as conn:
+        job = conn.execute("SELECT kind, trigger FROM jobs").fetchone()
+    assert (job["kind"], job["trigger"]) == ("refresh", "admin")
+    assert client.post("/configure/catalogs/alpha_list/refresh", data={}).status_code == 403  # CSRF as usual
+
+
+def test_basic_settings_come_first_and_the_rest_is_advanced(client):
+    page = client.get("/configure/new").text
+    simple, advanced = page.split('class="advanced"', 1)
+    for name in editor.BASIC_FIELDS:
+        assert f'name="{name}"' in simple, name
+    for name in ("focus", "weekday_focus", "categories", "position", "temperature"):
+        assert f'name="{name}"' in advanced and f'name="{name}"' not in simple, name
+    assert "What should this list be?" in simple and "catalog id" not in page.lower()
+
+
+def test_new_field_still_appears_in_advanced(monkeypatch):
+    """A definition field added later (milestone 7) shows up under Advanced by itself."""
+    from pydantic.fields import FieldInfo
+
+    fields = dict(editor.CatalogDefinition.model_fields)
+    fields["shiny_new_option"] = FieldInfo(annotation=bool, default=False)
+    monkeypatch.setattr(editor.CatalogDefinition, "model_fields", fields)
+    groups = dict(editor.advanced_groups())
+    assert "shiny_new_option" in [f.name for f in groups["Other"]]
+
+
+def test_pages_show_the_logo_and_no_signed_in_label(client):
+    add_catalog()
+    for path in ("/configure/", "/configure/new", "/configure/catalogs/alpha_list"):
+        html = client.get(path).text
+        assert 'src="/static/logo_256.png"' in html and "Signed in as" not in html

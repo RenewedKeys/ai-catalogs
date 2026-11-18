@@ -1,199 +1,295 @@
 {% extends "base.html" %}
-{% block title %}{{ catalog.name if catalog else "New catalog" }} · Catalog editor{% endblock %}
-{% macro counts(d) -%}
-{% if d %}{% for k, v in d.items() %}<span class="pill">{{ k }}: {{ v }}</span> {% endfor %}{% endif %}
-{%- endmacro %}
-{% block content %}
-<p><a href="{{ prefix }}/">&larr; Catalogs</a></p>
-{% if catalog %}
-<div class="row">
-  <h1>{{ catalog.name }} <span class="muted">{{ catalog.catalog_id }}</span></h1>
-  <a class="button secondary" href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/export.yaml">Export YAML</a>
-</div>
-<p class="muted">State: {{ catalog.state }} · managed by {{ "the editor" if catalog.source == "editor" else ("its file in catalogs.d" if catalog.source == "file" else catalog.source) }} · revision {{ catalog.config_rev[:12] }}</p>
-{% if catalog.last_error %}<p class="error">Last file error: {{ catalog.last_error }}</p>{% endif %}
-{% if file_present and catalog.source == "editor" %}
-<p class="warning">catalogs.d/{{ file_present }} still exists and is ignored: this catalog is managed in the editor. Delete or rename the file.</p>
-{% endif %}
-{% else %}
-<h1>New catalog</h1>
-{% endif %}
+{% block title %}{{ catalog.name if catalog else "New catalog" }} · AI Catalogs{% endblock %}
 
+{% macro field(f) -%}
+{% set v = values.get(f.name, "") %}
+{% set wide = f.kind in ("textarea", "yaml", "lines") or f.name == "prompt" %}
+<div class="field{{ ' full' if f.name == 'prompt' else '' }}">
+  <label for="f-{{ f.name }}">{{ label_of(f.name) }}</label>
+  <div class="control">
+  {% if f.kind == "bool" %}
+    <input id="f-{{ f.name }}" type="checkbox" class="switch" name="{{ f.name }}" value="on" {{ "checked" if v else "" }}>
+  {% elif f.kind == "number" %}
+    <span class="number">
+    {% if f.slider %}<input type="range" data-for="f-{{ f.name }}" min="{{ f.minimum }}" max="{{ f.maximum }}" step="{{ f.step }}" value="{{ v if v else f.minimum }}" aria-hidden="true" tabindex="-1">{% endif %}
+    <input id="f-{{ f.name }}" name="{{ f.name }}" type="text" inputmode="decimal" value="{{ v }}"
+      placeholder="{{ f.default if f.default is not none else 'Any' }}">
+    </span>
+  {% elif f.kind == "select" %}
+    <select id="f-{{ f.name }}" name="{{ f.name }}">
+      {% if not f.required and f.default is none %}<option value="">Default</option>{% endif %}
+      {% for c in f.choices %}<option value="{{ c }}" {{ "selected" if c == v else "" }}>{{ c }}</option>{% endfor %}
+    </select>
+  {% elif f.name == "prompt" %}
+    <textarea id="f-{{ f.name }}" name="{{ f.name }}" rows="6" class="big" required
+      placeholder="e.g. Feel-good films for a lazy Sunday: warm, funny, nothing too heavy. Mostly from the last 30 years.">
+{{ v }}</textarea>
+  {% elif f.kind == "textarea" %}
+    <textarea id="f-{{ f.name }}" name="{{ f.name }}" rows="5">
+{{ v }}</textarea>
+  {% elif f.kind == "text" %}
+    <input id="f-{{ f.name }}" name="{{ f.name }}" value="{{ v }}"{% if f.name == "name" %} placeholder="{{ catalog.name if catalog else 'e.g. Sunday Comfort' }}"{% if not catalog %} required{% endif %}{% endif %}>
+  {% else %}
+    <textarea id="f-{{ f.name }}" name="{{ f.name }}" rows="{{ 3 if f.kind == 'yaml' else 2 }}" class="{{ 'mono' if f.kind == 'yaml' else '' }}">
+{{ v }}</textarea>
+  {% endif %}
+  </div>
+  {% set h = help_of(f) %}
+  {% if f.name == "exclude_watched" and not mdblist_ready %}{% set h = "Set MDBLIST_API_KEY on the server to use this." %}{% endif %}
+  {% if h %}<span class="help">{{ h }}</span>{% endif %}
+</div>
+{%- endmacro %}
+
+{% block content %}
+<a class="back" href="{{ prefix }}/">&larr; All catalogs</a>
+
+<div class="stack">
+<div class="row">
+  <div class="row-start">
+    <h1>{{ catalog.name if catalog else "New catalog" }}</h1>
+    {% if catalog %}
+      {% if catalog.last_error %}<span class="chip bad">Needs attention</span>
+      {% elif catalog.state == "enabled" %}<span class="chip live">Live</span>
+      {% else %}<span class="chip off">Hidden</span>{% endif %}
+      {% if catalog.status.open_job %}<span class="chip busy">Running</span>{% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if catalog and catalog.last_error %}<p class="error">{{ catalog.last_error }}</p>{% endif %}
+{% if file_present and catalog and catalog.source == "editor" %}
+<p class="warning">catalogs.d/{{ file_present }} is ignored now that this catalog is managed here. You can delete that file.</p>
+{% endif %}
 {% if errors %}
 <div class="error" role="alert"><strong>Not saved:</strong>
 <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
 {% endif %}
 
-{% if checked %}
-<details class="preview" open>
-  <summary>Prompt rendered against a sample day</summary>
-  {% if checked.unresolved %}<p class="warning">No TMDB match for: {{ checked.unresolved | join(", ") }}</p>{% endif %}
-  <pre>{{ checked.prompt_preview }}</pre>
-</details>
-{% endif %}
-
 {% if catalog and not editable and catalog.source != "file" %}
-<section class="panel"><p>This catalog was loaded as a fixture (<code>load-fixture</code>); it cannot be edited here.</p></section>
+<p class="warning">This catalog was loaded as a test fixture and can't be edited here.</p>
 {% endif %}
 {% if catalog and catalog.source == "file" %}
-<section class="panel">
-  <p>This catalog comes from <code>catalogs.d/{{ catalog.catalog_id }}.yaml</code>, which wins until you move the catalog here.
-  After the move the editor wins and the file is ignored (delete or rename it then). The move is one-way.</p>
+<section class="card">
+  <h2>Managed by a file</h2>
+  <p class="sub">This catalog comes from <code>catalogs.d/{{ catalog.catalog_id }}.yaml</code>. Move it here to edit it in the browser; the file is ignored from then on.</p>
   <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/move-to-editor">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit">Move to editor</button>
+    <button type="submit">Edit it here instead</button>
   </form>
 </section>
 {% endif %}
 
-{% if catalog %}
-{% set st = catalog.status %}
-<section class="panel" id="runs" data-status-url="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/status.json" data-open-job="{{ st.open_job.id if st.open_job else '' }}">
-  <div class="row"><h2>Runs</h2>
-  <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/dry-run" class="inline">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit" {{ "disabled" if catalog.state != "enabled" or st.open_job else "" }}>Dry run</button>
-  </form></div>
-  <p class="hint">A dry run uses the saved definition, spends model calls (shared daily limit) and publishes nothing.
-  Its result is the stage counts and reject reasons below, not a list of titles.</p>
-  {% if st.open_job %}<p class="notice" id="open-job">Job {{ st.open_job.id }} ({{ st.open_job.kind }}) is {{ st.open_job.state }}, attempt {{ st.open_job.attempt }}. This page reloads when it ends.</p>{% endif %}
-  {% if st.recent_runs %}
-  <table class="list">
-    <thead><tr><th>Run</th><th>Kind</th><th>Status</th><th>Started</th><th>Model calls</th><th>Stage counts</th><th>Reject reasons</th></tr></thead>
-    <tbody>
-    {% for r in st.recent_runs %}
-    <tr>
-      <td>{{ r.id }}</td><td>{{ r.kind }} <span class="muted">({{ r.trigger }})</span></td>
-      <td>{{ r.status }}{% if r.error_category %} <span class="error">{{ r.error_category }} {{ r.error_status or "" }}</span>{% endif %}</td>
-      <td>{{ r.started_at }}</td><td>{{ r.model_calls if r.model_calls is not none else "-" }}</td>
-      <td>{{ counts(r.stage_counts) }}</td><td>{{ counts(r.reject_reasons) }}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="muted">No runs yet.</p>{% endif %}
+{% if checked %}
+<section class="card">
+  <h2>Looks good</h2>
+  <p class="sub">Not saved yet. This is what the AI will be asked (shown for a sample day):</p>
+  {% if checked.unresolved %}<p class="warning">Not found on TMDB: {{ checked.unresolved | join(", ") }}</p>{% endif %}
+  <pre class="preview">{{ checked.prompt_preview }}</pre>
 </section>
-
-<section class="panel">
-  <h2>Published lists</h2>
-  {% if catalog.snapshots %}
-  <table class="list">
-    <thead><tr><th>List</th><th>Published</th><th>Items</th><th>Status</th><th></th></tr></thead>
-    <tbody>
-    {% for s in catalog.snapshots %}
-    <tr>
-      <td>{{ s.id }}</td><td>{{ s.created_at }}</td><td>{{ s["items"] }}</td>
-      <td>{{ "served now" if s.status == "active" else ("revoked" if s.revoked else ("payload pruned" if not s.has_payload else "earlier")) }}</td>
-      <td>{% if s.eligible %}<a class="button secondary small" href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/rollback/{{ s.id }}">Roll back…</a>{% endif %}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="muted">Nothing published yet.</p>{% endif %}
-</section>
-
 {% endif %}
 
 {% set action = prefix ~ ("/catalogs/" ~ catalog.catalog_id ~ "/save" if catalog else "/new") %}
 <nav class="tabs">
-  <a href="#form-tab" class="{{ 'active' if mode == 'form' else '' }}">Form</a>
-  <a href="#yaml-tab" class="{{ 'active' if mode == 'yaml' else '' }}">Raw YAML</a>
+  <a href="#form-tab" class="{{ 'active' if mode == 'form' else '' }}">Settings</a>
+  {% if catalog %}<a href="#activity-tab">Activity</a>{% endif %}
+  <a href="#yaml-tab" class="{{ 'active' if mode == 'yaml' else '' }}">YAML</a>
 </nav>
 
-<form method="post" action="{{ action }}" id="form-tab" class="editor{{ ' hidden-tab' if mode == 'yaml' else '' }}">
+{# ------------------------------------------------------------ settings #}
+<form method="post" action="{{ action }}" id="form-tab" class="stack{{ ' hidden-tab' if mode == 'yaml' else '' }}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="mode" value="form">
   {% if catalog %}<input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">{% endif %}
-  <fieldset {{ "disabled" if not editable else "" }}>
-  {% if not catalog %}
-  <div class="field">
-    <label for="f-catalog_id">catalog id</label>
-    <input id="f-catalog_id" name="catalog_id" value="{{ catalog_id }}" required pattern="[a-z0-9]+(_[a-z0-9]+)*">
-    <span class="hint">lowercase letters and digits joined by "_"; also the id in the manifest</span>
-  </div>
-  {% endif %}
-  {% for group, fields in groups %}
-  <h2>{{ group }}</h2>
-  {% for f in fields %}
-  {% set v = values.get(f.name, "") %}
-  <div class="field field-{{ f.kind }}">
-    <label for="f-{{ f.name }}">{{ f.label }}{% if f.required %} *{% endif %}</label>
-    {% if f.kind == "bool" %}
-      <input id="f-{{ f.name }}" type="checkbox" name="{{ f.name }}" value="on" {{ "checked" if v else "" }}>
-    {% elif f.kind == "number" %}
-      <span class="number">
-      {% if f.slider %}<input type="range" data-for="f-{{ f.name }}" min="{{ f.minimum }}" max="{{ f.maximum }}" step="{{ f.step }}" value="{{ v if v else f.minimum }}" aria-hidden="true" tabindex="-1">{% endif %}
-      <input id="f-{{ f.name }}" name="{{ f.name }}" type="text" inputmode="decimal" value="{{ v }}" size="10"
-        {% if f.default is not none %}placeholder="{{ f.default }}"{% endif %}>
-      </span>
-    {% elif f.kind == "select" %}
-      <select id="f-{{ f.name }}" name="{{ f.name }}">
-        {% if not f.required and f.default is none %}<option value="">(default)</option>{% endif %}
-        {% for c in f.choices %}<option value="{{ c }}" {{ "selected" if c == v else "" }}>{{ c }}</option>{% endfor %}
-      </select>
-    {% elif f.kind == "textarea" %}
-      <textarea id="f-{{ f.name }}" name="{{ f.name }}" rows="14" class="wide mono" {{ "required" if f.required else "" }}>
-{{ v }}</textarea>
-    {% elif f.kind == "text" %}
-      <input id="f-{{ f.name }}" name="{{ f.name }}" value="{{ v }}" class="wide">
-    {% else %}
-      <textarea id="f-{{ f.name }}" name="{{ f.name }}" rows="{{ 4 if f.kind == 'yaml' else 3 }}" class="wide mono">
-{{ v }}</textarea>
-    {% endif %}
-    {% if f.hint %}<span class="hint">{{ f.hint }}</span>{% endif %}
-  </div>
-  {% endfor %}
-  {% endfor %}
-  <div class="actions">
-    <button type="submit" name="action" value="validate" class="secondary">Validate</button>
-    <button type="submit" name="action" value="save">Save (goes live)</button>
+  <fieldset class="stack" {{ "disabled" if not editable else "" }}>
+
+  {% set by = {} %}{% for f in basic %}{% set _ = by.update({f.name: f}) %}{% endfor %}
+
+  <section class="card">
+    <h2>The list</h2>
+    <p class="sub">Name it and describe it in your own words.</p>
+    {% if by.name %}{{ field(by.name) }}{% endif %}
+    {% if by.prompt %}{{ field(by.prompt) }}{% endif %}
+    {% if by.target_count %}{{ field(by.target_count) }}{% endif %}
+    <div class="field">
+      <label>Refresh</label>
+      <div>
+        <div class="segmented" role="radiogroup" aria-label="Refresh">
+          {% for m, text in [("manual", "Manually"), ("daily", "Every day"), ("weekly", "Every week"), ("custom", "Custom")] %}
+          <label><input type="radio" name="sched_mode" value="{{ m }}" {{ "checked" if values.sched_mode == m else "" }}><span>{{ text }}</span></label>
+          {% endfor %}
+        </div>
+        <div class="sched-detail" data-sched="daily weekly" {{ "hidden" if values.sched_mode not in ("daily", "weekly") else "" }}>
+          <span data-sched="weekly" {{ "hidden" if values.sched_mode != "weekly" else "" }}>
+            <select name="sched_day" aria-label="Day">
+              {% for i, d in weekdays %}<option value="{{ i }}" {{ "selected" if values.sched_day == i|string else "" }}>{{ d }}</option>{% endfor %}
+            </select>
+          </span>
+          <label for="sched-time">at</label>
+          <input id="sched-time" type="time" name="sched_time" value="{{ values.sched_time }}" class="short">
+        </div>
+        <div class="sched-detail" data-sched="custom" {{ "hidden" if values.sched_mode != "custom" else "" }}>
+          <input name="sched_cron" value="{{ values.sched_cron }}" class="mono" placeholder="0 6 * * *" aria-label="Cron expression">
+        </div>
+        <div class="sched-detail" data-sched="daily weekly custom" {{ "hidden" if values.sched_mode == "manual" else "" }}>
+          <label for="sched-tz">time zone</label>
+          <input id="sched-tz" name="sched_tz" value="{{ values.sched_tz }}" placeholder="UTC" data-autotz>
+        </div>
+      </div>
+      <span class="help">Manually: it only refreshes when you press Refresh now. Tip: leave it on Manually while you try it out.</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Rules</h2>
+    <p class="sub">Every film is checked against these. Leave a box empty for no limit.</p>
+    {% for n in ("min_vote_average", "min_vote_count", "year_min", "year_max", "min_runtime", "languages", "exclude_watched", "blacklist_titles") %}
+    {% if by[n] %}{{ field(by[n]) }}{% endif %}
+    {% endfor %}
+  </section>
+
+  <details class="advanced">
+    <summary>Advanced settings</summary>
+    <div class="inner">
+      <p class="muted small">Optional fine-tuning. The defaults work well.</p>
+      {% for group, fields in advanced %}
+      <h3>{{ group }}</h3>
+      {% for f in fields %}{{ field(f) }}{% endfor %}
+      {% endfor %}
+    </div>
+  </details>
+
+  <div class="savebar">
+    <button type="submit" name="action" value="validate" class="secondary">Check</button>
+    <button type="submit" name="action" value="save">{{ "Save changes" if catalog else "Create catalog" }}</button>
   </div>
   </fieldset>
 </form>
 
-<form method="post" action="{{ action }}" id="yaml-tab" class="editor{{ ' hidden-tab' if mode != 'yaml' else '' }}">
+{# ------------------------------------------------------------ activity #}
+{% if catalog %}
+{% set st = catalog.status %}
+<div id="activity-tab" class="stack hidden-tab">
+  <section class="card" id="runs" data-status-url="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/status.json" data-open-job="{{ st.open_job.id if st.open_job else '' }}">
+    <div class="row">
+      <div>
+        <h2>Refreshes</h2>
+        <p class="muted small">Refresh now publishes a new list. A test run shows what a refresh would pick without changing what your viewers see.</p>
+      </div>
+      <div class="row-start">
+        <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/dry-run" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="secondary" {{ "disabled" if catalog.state != "enabled" or st.open_job else "" }}>Test run</button>
+        </form>
+        <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/refresh" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" {{ "disabled" if catalog.state != "enabled" or st.open_job else "" }}>Refresh now</button>
+        </form>
+      </div>
+    </div>
+    {% if st.open_job %}<p class="notice" id="open-job">{{ "Test run" if st.open_job.kind == "dry_run" else "Refresh" }} in progress. This page updates when it finishes.</p>{% endif %}
+    {% if st.recent_runs %}
+    <div class="runs">
+      {% for r in st.recent_runs %}
+      {% set sc = r.stage_counts or {} %}
+      <div class="run">
+        <div class="head">
+          <span class="title">{{ run_kind(r) }}</span>
+          <span class="muted small">{{ r.started_at | when }} · {{ run_status(r) }}{% if r.error_category %} <span class="error">{{ r.error_category }}{{ " " ~ r.error_status if r.error_status else "" }}</span>{% endif %}</span>
+        </div>
+        {% if sc %}
+        <div class="funnel">
+          {% if sc.generated is defined %}<span class="stat"><b>{{ sc.generated }}</b>suggested</span>{% endif %}
+          {% if sc.eligible is defined %}<span class="stat"><b>{{ sc.eligible }}</b>passed your rules</span>{% endif %}
+          {% if sc.held_for_history %}<span class="stat"><b>{{ sc.held_for_history }}</b>shown recently</span>{% endif %}
+          {% if sc.selected is defined %}<span class="stat pick"><b>{{ sc.selected }}</b>picked</span>{% endif %}
+        </div>
+        {% endif %}
+        {% if r.reject_reasons %}
+        <div class="reasons">Turned away:
+          {% for k, n in r.reject_reasons.items() %}<span>{{ reject_label(k) }} · {{ n }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        {% if sc %}
+        <details class="raw"><summary>Details</summary>
+          {% for k, n in sc.items() %}{{ k }} {{ n }}{{ " · " if not loop.last else "" }}{% endfor %}
+          {% if r.model_calls is not none %} · AI requests {{ r.model_calls }}{% endif %}
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}<p class="muted" >No refreshes yet. Try a test run.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Published lists</h2>
+    {% if catalog.snapshots %}
+    <table class="list">
+      <thead><tr><th>Published</th><th>Films</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for s in catalog.snapshots %}
+      <tr>
+        <td>{{ s.created_at | when }}</td><td>{{ s["items"] }}</td>
+        <td>{% if s.status == "active" %}<span class="chip live">Showing now</span>{% elif s.revoked %}Withdrawn{% elif not s.has_payload %}Expired{% else %}Earlier{% endif %}</td>
+        <td>{% if s.eligible %}<a class="button secondary small" href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/rollback/{{ s.id }}">Bring back</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="muted">Nothing published yet.</p>{% endif %}
+  </section>
+
+  {% if editable %}
+  <section class="card">
+    <h2>Visibility</h2>
+    <p class="sub">{{ "Live: it shows in Stremio and refreshes on its schedule." if catalog.state == "enabled" else "Hidden: kept here, but not shown in Stremio and not refreshed." }}</p>
+    <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/state" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">
+      {% if catalog.state == "enabled" %}
+      <button type="submit" name="state" value="disabled" class="secondary">Hide from Stremio</button>
+      {% else %}
+      <button type="submit" name="state" value="enabled">Show in Stremio</button>
+      {% endif %}
+    </form>
+    <details class="danger-zone">
+      <summary>Delete this catalog…</summary>
+      <p>It disappears from Stremio. This can't be undone here.</p>
+      {% if file_present %}<p class="warning">catalogs.d/{{ file_present }} exists: once deleted here, that file brings the catalog back within about 30 seconds.</p>{% endif %}
+      <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/state">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">
+        <button type="submit" name="state" value="removed" class="danger">Delete catalog</button>
+      </form>
+    </details>
+  </section>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ------------------------------------------------------------ YAML #}
+<form method="post" action="{{ action }}" id="yaml-tab" class="stack{{ ' hidden-tab' if mode != 'yaml' else '' }}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="mode" value="yaml">
   {% if catalog %}<input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">{% endif %}
-  <fieldset {{ "disabled" if not editable else "" }}>
-  {% if not catalog %}
-  <div class="field">
-    <label for="y-catalog_id">catalog id</label>
-    <input id="y-catalog_id" name="catalog_id" value="{{ catalog_id }}" required pattern="[a-z0-9]+(_[a-z0-9]+)*">
-  </div>
-  {% endif %}
-  <p class="hint">The whole definition as YAML (paste a file here to import it). Comments are not kept.</p>
-  <textarea name="yaml" rows="28" class="wide mono">
+  <fieldset class="stack" {{ "disabled" if not editable else "" }}>
+  <section class="card">
+    <div class="row">
+      <div>
+        <h2>Edit as YAML</h2>
+        <p class="muted small">For power users: the whole catalog as one text. Paste a file here to import it. Comments aren't kept.</p>
+      </div>
+      {% if catalog %}<a class="button secondary small" href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/export.yaml">Download</a>{% endif %}
+    </div>
+    <textarea name="yaml" rows="24" class="mono" aria-label="YAML">
 {{ yaml_text }}</textarea>
-  <div class="actions">
-    <button type="submit" name="action" value="validate" class="secondary">Validate</button>
-    <button type="submit" name="action" value="save">Save (goes live)</button>
+  </section>
+  <div class="savebar">
+    <button type="submit" name="action" value="validate" class="secondary">Check</button>
+    <button type="submit" name="action" value="save">{{ "Save changes" if catalog else "Create catalog" }}</button>
   </div>
   </fieldset>
 </form>
-
-{% if catalog and editable %}
-<section class="panel">
-  <h2>Catalog state</h2>
-  <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/state" class="inline">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">
-    {% if catalog.state == "enabled" %}
-    <button type="submit" name="state" value="disabled" class="secondary">Disable (hide from the manifest)</button>
-    {% else %}
-    <button type="submit" name="state" value="enabled" class="secondary">Enable</button>
-    {% endif %}
-  </form>
-  <details class="danger-zone">
-    <summary>Delete…</summary>
-    <p>The catalog leaves the manifest and is marked removed. Its history is kept.</p>
-    {% if file_present %}<p class="warning">catalogs.d/{{ file_present }} exists: once the catalog is deleted here, that file is applied again (within about 30 s) and brings the catalog back as a file catalog.</p>{% endif %}
-    <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/state">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">
-      <button type="submit" name="state" value="removed" class="danger">Delete catalog</button>
-    </form>
-  </details>
-</section>
-{% endif %}
+</div>
 {% endblock %}
