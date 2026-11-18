@@ -606,7 +606,7 @@ def test_dry_run_is_queued_and_its_result_shown(client):
         job = conn.execute("SELECT id, kind, state, trigger FROM jobs").fetchone()
     assert (job["kind"], job["state"], job["trigger"]) == ("dry_run", "pending", "admin")
     page = client.get(r.headers["location"]).text
-    assert "Test run started" in page and "Test run in progress" in page
+    assert "Test run started" in page and 'id="open-job"' in page and "In progress" in page
     assert client.get("/configure/catalogs/alpha_list/status.json").json()["open_job"]["id"] == job["id"]
     r = client.post("/configure/catalogs/alpha_list/dry-run", data={"csrf": token(client)})
     assert r.headers["location"].endswith("msg=already_open#activity-tab")
@@ -914,7 +914,7 @@ def test_list_sizes_are_shown_as_numbers(client):
     for html in pages:
         assert "built-in method" not in html
     assert "4 movies" in pages[0]
-    assert "<td>3</td>" in pages[1] and "<td>4</td>" in pages[1]
+    assert "<b>3</b>" in pages[1] and "<b>4</b>" in pages[1]
     assert "3 movies" in pages[2]
 
 
@@ -1301,3 +1301,78 @@ def test_internal_prompt_knobs_are_hidden_but_kept(client):
     vals = {k: v for k, v in values_for({"prompt": PROMPT}).items() if k not in editor.FORM_HIDDEN}
     r = post_form(client, "/configure/catalogs/alpha_list/save", vals, base_rev=rev, action="save")
     assert r.status_code == 303 and catalog_row("alpha_list")["config_rev"] == rev
+
+
+def test_times_use_the_server_time_zone(monkeypatch):
+    monkeypatch.setenv("TZ", "America/New_York")
+    assert admin_mod.when("2026-11-17T23:12:55Z") == "2026-11-17 18:12 EST"
+    monkeypatch.setenv("TZ", "Not/AZone")
+    assert admin_mod.when("2026-11-17T23:12:55Z") == "2026-11-17 23:12 UTC"
+    monkeypatch.delenv("TZ")
+    assert admin_mod.when("2026-11-17T23:12:55Z") == "2026-11-17 23:12 UTC"
+
+
+def test_relative_times():
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 18, 12, 0, tzinfo=timezone.utc)
+    assert admin_mod.ago("2026-11-18T11:59:30Z", now) == "just now"
+    assert admin_mod.ago("2026-11-18T11:55:00Z", now) == "5 min ago"
+    assert admin_mod.ago("2026-11-18T09:00:00Z", now) == "3 h ago"
+    assert admin_mod.ago("2026-11-17T10:00:00Z", now) == "yesterday"
+    assert admin_mod.ago("2026-11-01T10:00:00Z", now) == "1 Nov"
+
+
+def test_empty_schedule_time_zone_defaults_to_the_server(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    assert editor.schedule_from_form({"sched_mode": "daily", "sched_time": "06:00", "sched_tz": ""}, None) == {
+        "cron": "0 6 * * *",
+        "timezone": "Europe/Berlin",
+    }
+    # A stored schedule without a timezone still means UTC: round trip unchanged.
+    stored = {"cron": "0 6 * * *"}
+    assert editor.schedule_from_form(editor.schedule_values(stored), stored) == stored
+
+
+def test_activity_lists_are_compact_and_paged(client):
+    rev = add_catalog()
+    with db.session() as conn, db.transaction(conn):
+        for i in range(8):
+            conn.execute(
+                "INSERT INTO runs (catalog_id, config_rev, epoch, trigger, dry_run, started_at, status, stage_counts_json, "
+                "reject_reasons_json, model_calls, preview_json) VALUES ('alpha_list', ?, 0, 'admin', ?, ?, 'ok', ?, ?, 1, ?)",
+                (
+                    rev,
+                    i % 2,
+                    db.now_ms() - i * 60_000,
+                    json.dumps({"generated": 9, "eligible": 7, "selected": 5}),
+                    json.dumps({}),
+                    json.dumps([["Film 1", 2001, "tt0000001"]]) if i % 2 else None,
+                ),
+            )
+    page = client.get("/configure/catalogs/alpha_list").text
+    rows = re.findall(r'<details class="row-item run-row( older)?" data-kind="(\w+)"', page)
+    assert len(rows) == 8 and sum(1 for older, _ in rows if older) == 3  # newest 5 shown, the rest behind "Show older"
+    assert "Show older runs" in page and 'data-filter="dry_run"' in page
+    assert "<b>5</b> picked" in page and "min ago" in page
+
+
+def test_failed_runs_explain_themselves(client):
+    rev = add_catalog()
+    with db.session() as conn, db.transaction(conn):
+        conn.execute(
+            "INSERT INTO runs (catalog_id, config_rev, epoch, trigger, dry_run, started_at, status, stage_counts_json, "
+            "reject_reasons_json, model_calls, error_category) VALUES ('alpha_list', ?, 0, 'admin', 1, ?, 'failed', ?, ?, 3, "
+            "'shortfall')",
+            (
+                rev,
+                db.now_ms(),
+                json.dumps({"generated": 86, "eligible": 30, "selected": 30, "unmet_hard": 3}),
+                json.dumps({"votes_low": 22}),
+            ),
+        )
+    page = client.get("/configure/catalogs/alpha_list").text
+    assert "Failed: Couldn&#39;t find enough that fit all your rules" in page
+    assert "Publish what was found" in page and "The current version stays." in page
+    assert ">shortfall<" not in page
+    assert admin_mod.run_error({"error_category": "something_new"})[0] == "Something new"

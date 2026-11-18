@@ -83,7 +83,7 @@
 <p class="muted small"><b>Test run</b> asks the AI with the saved settings and shows its picks under Activity, without changing what your apps see. <b>Run now</b> publishes a new version.</p>
 {% endif %}
 
-{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if notice %}<p class="notice flash">{{ notice }}</p>{% endif %}
 {% if catalog and catalog.last_error %}<p class="error">{{ catalog.last_error }}</p>{% endif %}
 {% if file_present and catalog and catalog.source == "editor" %}
 <p class="warning">catalogs.d/{{ file_present }} is ignored now that this catalog is managed here. You can delete that file.</p>
@@ -210,7 +210,7 @@
 {% set st = catalog.status %}
 <div id="activity-tab" class="stack hidden-tab">
   <section class="card" id="runs" data-status-url="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/status.json" data-open-job="{{ st.open_job.id if st.open_job else '' }}">
-    <div class="row">
+    <div class="section-head">
       <div>
         <h2>Runs</h2>
         <p class="muted small">Run now publishes a new version. Test run shows what a run would pick, without changing what your apps see.</p>
@@ -226,66 +226,109 @@
         </form>
       </div>
     </div>
-    {% if st.open_job %}<p class="notice" id="open-job">{{ "Test run" if st.open_job.kind == "dry_run" else "Run" }} in progress. This page updates when it finishes.</p>{% endif %}
-    {% if st.recent_runs %}
-    <div class="runs">
+
+    {% if st.recent_runs or st.open_job %}
+    <div class="list-tools">
+      <div class="filter" role="group" aria-label="Show">
+        <button type="button" class="filter-btn active" data-filter="all">All</button>
+        <button type="button" class="filter-btn" data-filter="refresh">Runs</button>
+        <button type="button" class="filter-btn" data-filter="dry_run">Test runs</button>
+      </div>
+    </div>
+    <div class="rows" id="run-rows">
+      {% if st.open_job %}
+      <div class="row-item running" id="open-job">
+        <span class="pulse" aria-hidden="true"></span>
+        <span class="row-kind">{{ "Test run" if st.open_job.kind == "dry_run" else "Run" }}</span>
+        <span class="row-main muted">In progress. This page updates when it finishes.</span>
+      </div>
+      {% endif %}
+      {% set first_test = namespace(done=false) %}
       {% for r in st.recent_runs %}
       {% set sc = r.stage_counts or {} %}
-      <div class="run">
-        <div class="head">
-          <span class="title">{{ run_kind(r) }}</span>
-          <span class="muted small">{{ r.started_at | when }} · {{ run_status(r) }}{% if r.error_category %} <span class="error">{{ r.error_category }}{{ " " ~ r.error_status if r.error_status else "" }}</span>{% endif %}</span>
-        </div>
-        {% if sc %}
-        <div class="funnel">
-          {% if sc.generated is defined %}<span class="stat"><b>{{ sc.generated }}</b>suggested</span>{% endif %}
-          {% if sc.eligible is defined %}<span class="stat"><b>{{ sc.eligible }}</b>passed your rules</span>{% endif %}
-          {% if sc.held_for_history %}<span class="stat"><b>{{ sc.held_for_history }}</b>shown recently</span>{% endif %}
-          {% if sc.selected is defined %}<span class="stat pick"><b>{{ sc.selected }}</b>picked</span>{% endif %}
-        </div>
-        {% endif %}
-        {% if r.reject_reasons %}
-        <div class="reasons">Turned away:
-          {% for k, n in r.reject_reasons.items() %}<span>{{ reject_label(k) }} · {{ n }}</span>{% endfor %}
-        </div>
-        {% endif %}
-        {% set d = run_details(r, saved_kind) %}
-        {% if d %}<p class="run-details">{{ d | join(" · ") }}</p>{% endif %}
-        {% if r.picks %}
-        <details class="picks" {{ "open" if loop.first else "" }}>
-          <summary>{{ "The" if r.kind == "dry_run" else "" }} {{ r.picks|length }} {{ "movies"|say(saved_kind) }} it picked{{ " (not published)" if r.kind == "dry_run" else "" }}</summary>
+      {% set open_it = r.kind == "dry_run" and r.picks and not first_test.done and loop.index <= 2 %}
+      {% if r.kind == "dry_run" and r.picks %}{% set first_test.done = true %}{% endif %}
+      <details class="row-item run-row{{ ' older' if loop.index > first_shown else '' }}" data-kind="{{ r.kind }}" {{ "open" if open_it else "" }}>
+        <summary>
+          <span class="row-icon {{ 'test' if r.kind == 'dry_run' else 'live' }}" aria-hidden="true">{{ icon("flask" if r.kind == "dry_run" else "play") }}</span>
+          <span class="row-kind">{{ run_kind(r) }}</span>
+          <span class="row-main">
+            {% if r.status == "ok" and sc.selected is defined %}<b>{{ sc.selected }}</b> picked<span class="muted"> from {{ sc.generated if sc.generated is defined else "?" }} suggested</span>
+            {% elif r.error_category %}<span class="error-text">Failed: {{ run_error(r)[0] }}</span>
+            {% else %}<span class="muted">{{ run_status(r) | capitalize }}</span>{% endif %}
+          </span>
+          <span class="row-when muted" title="{{ r.started_at | when }}">{{ r.started_at | ago }}</span>
+          <span class="chev" aria-hidden="true"></span>
+        </summary>
+        <div class="row-body">
+          {% if r.error_category %}
+          {% set why = run_error(r) %}
+          <div class="error run-error"><strong>{{ why[0] }}.</strong>{% if why[1] %} {{ why[1] }}{% endif %}</div>
+          {% endif %}
+          {% if sc %}
+          <div class="funnel">
+            {% if sc.generated is defined %}<span class="stat"><b>{{ sc.generated }}</b>suggested</span>{% endif %}
+            {% if sc.eligible is defined %}<span class="stat"><b>{{ sc.eligible }}</b>passed your rules</span>{% endif %}
+            {% if sc.held_for_history %}<span class="stat"><b>{{ sc.held_for_history }}</b>shown recently</span>{% endif %}
+            {% if sc.selected is defined %}<span class="stat pick"><b>{{ sc.selected }}</b>picked</span>{% endif %}
+          </div>
+          {% endif %}
+          {% if r.reject_reasons %}
+          <div class="reasons">Turned away:
+            {% for k, n in r.reject_reasons.items() %}<span>{{ reject_label(k) }} · {{ n }}</span>{% endfor %}
+          </div>
+          {% endif %}
+          {% set d = run_details(r, saved_kind) %}
+          {% if d %}<p class="run-details">{{ d | join(" · ") }}</p>{% endif %}
+          {% if r.picks %}
+          <p class="picks-title">{{ "The" if r.kind == "dry_run" else "" }} {{ r.picks|length }} {{ "movies"|say(saved_kind) }} it picked{{ " (not published)" if r.kind == "dry_run" else "" }}</p>
           <ol class="movie-grid">
             {% for m in r.picks %}<li><span class="t">{{ m.title }}</span>{% if m.year %} <span class="y">{{ m.year }}</span>{% endif %}</li>{% endfor %}
           </ol>
-        </details>
-        {% elif r.kind == "dry_run" and r.status == "ok" %}
-        <p class="muted small">This test run is from before test runs kept their picks. Run another to see them.</p>
-        {% endif %}
-      </div>
+          {% elif r.kind == "dry_run" and r.status == "ok" %}
+          <p class="muted small">This test run is from before test runs kept their picks. Run another to see them.</p>
+          {% elif r.kind == "refresh" and r.status == "ok" %}
+          <p class="muted small">Its {{ "movies"|say(saved_kind) }} are under Versions below.</p>
+          {% endif %}
+        </div>
+      </details>
       {% endfor %}
     </div>
+    {% if st.recent_runs|length > first_shown %}
+    <button type="button" class="ghost show-older" data-show-older="run-rows">Show older runs</button>
+    {% endif %}
     {% else %}<p class="muted">Nothing has run yet. Try a test run, or Run now to fill the catalog.</p>{% endif %}
   </section>
 
   <section class="card">
-    <h2>Versions</h2>
-    <p class="muted small">Each run publishes a new version of the catalog. Bring back an earlier one if you liked it better.</p>
+    <div class="section-head">
+      <div>
+        <h2>Versions</h2>
+        <p class="muted small">Each run publishes a new version of the catalog. Bring back an earlier one if you liked it better.</p>
+      </div>
+    </div>
     {% if catalog.snapshots %}
-    <table class="list">
-      <thead><tr><th>Published</th><th>{{ "Movies"|say(saved_kind) }}</th><th>Status</th><th></th></tr></thead>
-      <tbody>
+    <div class="rows" id="version-rows">
       {% for s in catalog.snapshots %}
-      <tr>
-        <td>{{ s.created_at | when }}{% if s.movies %}
-          <details class="picks inline-picks"><summary>{{ "See the movies"|say(saved_kind) }}</summary>
-            <ol class="movie-grid">{% for m in s.movies %}<li><span class="t">{{ m.title }}</span>{% if m.year %} <span class="y">{{ m.year }}</span>{% endif %}</li>{% endfor %}</ol>
-          </details>{% endif %}</td><td>{{ s["items"] }}</td>
-        <td>{% if s.status == "active" %}<span class="chip live">Showing now</span>{% elif s.revoked %}Withdrawn{% elif not s.has_payload %}Expired{% else %}Earlier{% endif %}</td>
-        <td>{% if s.eligible %}<a class="button secondary small" href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/rollback/{{ s.id }}">Bring back</a>{% endif %}</td>
-      </tr>
+      <details class="row-item{{ ' older' if loop.index > first_shown else '' }}">
+        <summary>
+          <span class="row-kind">{% if s.status == "active" %}<span class="chip live">Showing now</span>{% elif s.revoked %}<span class="chip off">Withdrawn</span>{% elif not s.has_payload %}<span class="chip off">Expired</span>{% else %}<span class="chip off">Earlier</span>{% endif %}</span>
+          <span class="row-main"><b>{{ s["items"] }}</b> {{ "movies"|say(saved_kind) }}</span>
+          <span class="row-when muted" title="{{ s.created_at | when }}">{{ s.created_at | ago }}</span>
+          {% if s.eligible %}<a class="button secondary small" href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/rollback/{{ s.id }}">Bring back</a>{% endif %}
+          <span class="chev" aria-hidden="true"></span>
+        </summary>
+        <div class="row-body">
+          {% if s.movies %}
+          <ol class="movie-grid">{% for m in s.movies %}<li><span class="t">{{ m.title }}</span>{% if m.year %} <span class="y">{{ m.year }}</span>{% endif %}</li>{% endfor %}</ol>
+          {% else %}<p class="muted small">Its list is no longer kept.</p>{% endif %}
+        </div>
+      </details>
       {% endfor %}
-      </tbody>
-    </table>
+    </div>
+    {% if catalog.snapshots|length > first_shown %}
+    <button type="button" class="ghost show-older" data-show-older="version-rows">Show older versions</button>
+    {% endif %}
     {% else %}<p class="muted">No versions yet.</p>{% endif %}
   </section>
 
