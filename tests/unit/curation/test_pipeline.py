@@ -89,9 +89,18 @@ async def test_happy_path_publishes_exactly_100_unique():
 
 
 def test_batches_are_at_most_60():
-    assert batch_sizes(160) == [60, 60, 40]
+    assert batch_sizes(160) == [54, 53, 53]
     assert batch_sizes(60) == [60]
     assert batch_sizes(1) == [1]
+    assert batch_sizes(64) == [64]  # a 40-movie catalog: one call, not 60 + 4
+    assert batch_sizes(79) == [79]
+    assert batch_sizes(80) == [40, 40]
+    assert batch_sizes(130) == [65, 65]
+    assert batch_sizes(400) == [58, 57, 57, 57, 57, 57, 57]
+    assert batch_sizes(0) == []
+    for total in range(1, 401):
+        sizes = batch_sizes(total)
+        assert sum(sizes) == total and max(sizes) < 80 and max(sizes) - min(sizes) <= 1
 
 
 async def test_two_consecutive_runs_share_zero_ids():

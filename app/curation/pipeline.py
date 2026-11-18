@@ -318,12 +318,18 @@ class RunSettings:
 
 
 def batch_sizes(total: int, max_batch: int = MAX_BATCH) -> list[int]:
-    """160 -> [60, 60, 40]."""
-    out = []
-    while total > 0:
-        out.append(min(max_batch, total))
-        total -= out[-1]
-    return out
+    """
+    Split a run's first request into as few, evenly sized calls as reasonable: a small
+    remainder (under a third of a batch) rides along instead of costing its own call.
+    64 -> [64]; 130 -> [65, 65]; 160 -> [54, 53, 53].
+    """
+    if total <= 0:
+        return []
+    calls = -(-total // max_batch)
+    if calls > 1 and total - (calls - 1) * max_batch < max_batch // 3:
+        calls -= 1
+    base, extra = divmod(total, calls)
+    return [base + 1] * extra + [base] * (calls - extra)
 
 
 class Pipeline:
