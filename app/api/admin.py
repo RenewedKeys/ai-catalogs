@@ -75,7 +75,7 @@ LOGIN_WINDOW_MS = 15 * 60 * 1000
 LOGIN_MAX_PER_CLIENT = 5
 LOGIN_MAX_TOTAL = 20
 SNAPSHOTS_SHOWN = 20
-RUNS_SHOWN = 30  # the Activity tab lists this many; the newest few are visible, the rest behind "Show older"
+RUNS_SHOWN = 30  # the Runs panel lists this many; the newest few are visible, the rest behind "Show older"
 FIRST_SHOWN = 5
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates" / "admin"
@@ -261,18 +261,23 @@ def ago(value: Any, now: Optional[datetime] = None) -> str:
         return "yesterday"
     if seconds < 7 * 86400:
         return f"{seconds // 86400} days ago"
-    return then.strftime("%-d %b")
+    return f"{then.strftime('%b')} {then.day}"
 
 
-def when(value: Any) -> str:
-    """'2026-11-17T23:12:55Z' -> '2026-11-17 18:12 EST' in the server's TZ (UTC when unset)."""
+def when(value: Any, now: Optional[datetime] = None) -> str:
+    """'2026-11-17T23:12:55Z' -> 'Nov 17, 6:12 p.m. EST' in the server's TZ (UTC when unset).
+
+    12-hour clock; the year shows only when it isn't the current one."""
     text = str(value or "")
     try:
         moment = datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     except ValueError:
         return text
-    local = moment.astimezone(ZoneInfo(editor.server_timezone_name()))
-    return local.strftime("%Y-%m-%d %H:%M ") + (local.tzname() or "")
+    zone = ZoneInfo(editor.server_timezone_name())
+    local = moment.astimezone(zone)
+    year = "" if local.year == (now or datetime.now(timezone.utc)).astimezone(zone).year else f", {local.year}"
+    day = f"{local.strftime('%b')} {local.day}{year}"
+    return f"{day}, {editor.clock(local.hour, local.minute)} {local.tzname() or ''}".rstrip()
 
 
 # Why a run failed, in plain words, with what to do about it. Keys are the controlled
@@ -294,7 +299,7 @@ RUN_ERRORS = {
     "transport": ("Couldn't reach the AI provider", "Check the server's internet connection and try again."),
     "output_invalid": (
         "The AI's answer couldn't be read",
-        "Try again, or pick a different AI model under Advanced settings.",
+        "Try again, or pick a different AI model under AI model in the side menu.",
     ),
     "provider_auth": ("The AI key was refused", "Check OPENAI_API_KEY / GEMINI_API_KEY on the server."),
     "provider_payment": ("The AI account is out of credit", "Top up your OpenRouter or Google account."),
@@ -302,7 +307,7 @@ RUN_ERRORS = {
     "provider_http_5xx": ("The AI provider had an error", "Wait a little and try again."),
     "provider_http_4xx": (
         "The AI provider rejected the request",
-        "Check the AI model name under Advanced settings.",
+        "Check the AI model name under AI model in the side menu.",
     ),
     "mdblist_auth": ("Your MDBList key was refused", "Check MDBLIST_API_KEY on the server."),
     "mdblist_rate_limit": ("MDBList is busy (rate limit)", "Wait a little and try again."),
@@ -556,6 +561,7 @@ def _catalogs() -> list[dict[str, Any]]:
                 **catalog_status(conn, r["catalog_id"], now),
                 "config_rev": r["config_rev"],
                 "kind": media.media_type(json.loads(r["definition_json"])),
+                "schedule_label": editor.schedule_label(json.loads(r["definition_json"]).get("schedule")),
             }
             for r in rows
         ]

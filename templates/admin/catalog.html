@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
+{% block main_class %}wide{% endblock %}
 {% block title %}{{ catalog.name if catalog else "New catalog" }} · AI Catalogs{% endblock %}
 
 {# Text that reads "movies" or "shows" with the Movies / Shows toggle (admin.js swaps it). #}
@@ -52,10 +53,11 @@
 {%- endmacro %}
 
 {% block content %}
-<a class="back" href="{{ prefix }}/">&larr; All catalogs</a>
+{# Panel icons: one per section of the side menu. #}
+{% set panel_icons = {"Steering the AI": "sparkles", "Exclusions": "ban", "Variety": "shuffle", "Refreshes": "refresh", "AI model": "cpu"} %}
+<a class="back" href="{{ prefix }}/">{{ icon("arrow-left") }}All catalogs</a>
 
-<div class="stack">
-<div class="row">
+<div class="page-head">
   <div class="row-start">
     <h1>{{ catalog.name if catalog else "New catalog" }}</h1>
     {% if catalog %}
@@ -70,7 +72,7 @@
   <div class="row-start">
     <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/dry-run" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" class="secondary" {{ "disabled" if busy else "" }} title="Ask the AI with the saved settings and show the results, without publishing">{{ icon("flask") }}Test run</button>
+      <button type="submit" class="secondary" {{ "disabled" if busy else "" }} title="Ask the AI with the saved settings and show its picks under Runs, without changing what your apps see">{{ icon("flask") }}Test run</button>
     </form>
     <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/refresh" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -80,9 +82,10 @@
   {% endif %}
 </div>
 {% if catalog and editable %}
-<p class="muted small"><b>Test run</b> asks the AI with the saved settings and shows its picks under Activity, without changing what your apps see. <b>Run now</b> publishes a new version.</p>
+<p class="muted small page-sub"><b>Test run</b> shows what the AI would pick, under Runs, without changing what your apps see. <b>Run now</b> publishes a new version.</p>
 {% endif %}
 
+<div class="stack">
 {% if notice %}<p class="notice flash">{{ notice }}</p>{% endif %}
 {% if catalog and catalog.last_error %}<p class="error">{{ catalog.last_error }}</p>{% endif %}
 {% if file_present and catalog and catalog.source == "editor" %}
@@ -115,24 +118,47 @@
   <pre class="preview">{{ checked.prompt_preview }}</pre>
 </section>
 {% endif %}
+</div>
 
 {% set action = prefix ~ ("/catalogs/" ~ catalog.catalog_id ~ "/save" if catalog else "/new") %}
-<nav class="tabs">
-  <a href="#form-tab" class="active">Settings</a>
-  {% if catalog %}<a href="#activity-tab">Activity</a>{% endif %}
+{% set by = {} %}{% for f in basic %}{% set _ = by.update({f.name: f}) %}{% endfor %}
+
+<div class="layout" id="layout">
+{# ------------------------------------------------------------ side menu #}
+<nav class="sidenav" aria-label="Sections">
+  <div class="nav-group">
+    <span class="nav-title">Settings</span>
+    <a href="#p-catalog" data-panel="p-catalog">{{ icon("film" if kind == "movie" else "tv") }}<span>The catalog</span></a>
+    <a href="#p-schedule" data-panel="p-schedule">{{ icon("clock") }}<span>Schedule</span></a>
+    <a href="#p-rules" data-panel="p-rules">{{ icon("filter") }}<span>Rules</span></a>
+  </div>
+  <div class="nav-group">
+    <span class="nav-title">Fine-tuning</span>
+    {% for group, fields in advanced %}
+    {% set pid = "p-" ~ (group | lower | replace(" ", "-")) %}
+    <a href="#{{ pid }}" data-panel="{{ pid }}">{{ icon(panel_icons.get(group, "sliders")) }}<span>{{ group }}</span></a>
+    {% endfor %}
+  </div>
+  {% if catalog %}
+  <div class="nav-group">
+    <span class="nav-title">Activity</span>
+    <a href="#p-runs" data-panel="p-runs" data-activity>{{ icon("history") }}<span>Runs</span>{% if catalog.status.open_job %}<span class="nav-dot" aria-label="running"></span>{% endif %}</a>
+    <a href="#p-versions" data-panel="p-versions" data-activity>{{ icon("layers") }}<span>Versions</span></a>
+  </div>
+  {% endif %}
 </nav>
 
+<div class="panels">
 {# ------------------------------------------------------------ settings #}
-<form method="post" action="{{ action }}" id="form-tab" class="stack" data-kind="{{ kind }}" data-saved-kind="{{ saved_kind if catalog else '' }}">
+<form method="post" action="{{ action }}" id="form-tab" data-kind="{{ kind }}" data-saved-kind="{{ saved_kind if catalog else '' }}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="mode" value="form">
   {% if catalog %}<input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">{% endif %}
-  <fieldset class="stack" {{ "disabled" if not editable else "" }}>
+  <fieldset {{ "disabled" if not editable else "" }}>
 
-  {% set by = {} %}{% for f in basic %}{% set _ = by.update({f.name: f}) %}{% endfor %}
-
+  <div class="panel" id="p-catalog">
   <section class="card">
-    <h2>The catalog</h2>
+    <div class="card-head"><h2>The catalog</h2><p class="sub">{{ say("Name it and describe the movies you want, in your own words.") }}</p></div>
     <div class="field">
       <label>{{ label_of("type") }}</label>
       <div>
@@ -145,10 +171,15 @@
       <span class="help">Each catalog is either movies or shows.</span>
       {% if catalog %}<span class="help warning-text" data-switch-note {{ "hidden" if kind == saved_kind else "" }}>Switching an existing catalog: after saving, add the addon again with Quick Add in AIOMetadata so it uses the new type.</span>{% endif %}
     </div>
-    <p class="sub">{{ say("Name it and describe the movies you want, in your own words.") }}</p>
     {% if by.name %}{{ field(by.name) }}{% endif %}
     {% if by.prompt %}{{ field(by.prompt) }}{% endif %}
     {% if by.target_count %}{{ field(by.target_count) }}{% endif %}
+  </section>
+  </div>
+
+  <div class="panel" id="p-schedule">
+  <section class="card">
+    <div class="card-head"><h2>Schedule</h2><p class="sub">When the AI makes a new version, and whether your apps show the catalog.</p></div>
     <div class="field">
       <label>Refresh</label>
       <div>
@@ -178,25 +209,25 @@
     </div>
     {% if by.enabled %}{{ field(by.enabled) }}{% endif %}
   </section>
+  </div>
 
+  <div class="panel" id="p-rules">
   <section class="card">
-    <h2>Rules</h2>
-    <p class="sub">{{ say("Every movie is checked against these. Leave a box empty for no limit.") }}</p>
+    <div class="card-head"><h2>Rules</h2><p class="sub">{{ say("Every movie is checked against these. Leave a box empty for no limit.") }}</p></div>
     {% for n in ("min_vote_average", "min_vote_count", "year_min", "year_max", "min_runtime", "languages", "exclude_watched", "blacklist_titles") %}
     {% if by[n] %}{{ field(by[n]) }}{% endif %}
     {% endfor %}
   </section>
+  </div>
 
-  <details class="advanced">
-    <summary>Advanced settings</summary>
-    <div class="inner">
-      <p class="muted small">Optional fine-tuning. The defaults work well.</p>
-      {% for group, fields in advanced %}
-      <h3>{{ group }}</h3>
-      {% for f in fields %}{{ field(f) }}{% endfor %}
-      {% endfor %}
-    </div>
-  </details>
+  {% for group, fields in advanced %}
+  <div class="panel" id="p-{{ group | lower | replace(' ', '-') }}">
+  <section class="card">
+    <div class="card-head"><h2>{{ group }}</h2><p class="sub">Optional fine-tuning. The defaults work well.</p></div>
+    {% for f in fields %}{{ field(f) }}{% endfor %}
+  </section>
+  </div>
+  {% endfor %}
 
   <div class="savebar">
     <a class="button ghost" href="{{ prefix }}/{{ 'catalogs/' ~ catalog.catalog_id if catalog else '' }}" data-confirm-leave>Cancel</a>
@@ -209,7 +240,8 @@
 {# ------------------------------------------------------------ activity #}
 {% if catalog %}
 {% set st = catalog.status %}
-<div id="activity-tab" class="stack hidden-tab">
+<div id="activity-tab">
+<div class="panel" id="p-runs">
   <section class="card" id="runs" data-status-url="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/status.json" data-open-job="{{ st.open_job.id if st.open_job else '' }}">
     <div class="section-head">
       <h2>Runs</h2>
@@ -295,7 +327,8 @@
     {% endif %}
     {% else %}<p class="muted">Nothing has run yet. Try a test run, or Run now to fill the catalog.</p>{% endif %}
   </section>
-
+</div>
+<div class="panel" id="p-versions">
   <section class="card">
     <div class="section-head">
       <div>
@@ -327,9 +360,9 @@
     {% endif %}
     {% else %}<p class="muted">No versions yet.</p>{% endif %}
   </section>
-
+</div>
 </div>
 {% endif %}
-
+</div>
 </div>
 {% endblock %}

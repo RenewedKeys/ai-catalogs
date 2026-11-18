@@ -4,71 +4,76 @@
 <div class="stack">
 {% if notice %}<p class="notice flash">{{ notice }}</p>{% endif %}
 
-<section class="card hero hero-brand">
-  <img class="hero-logo" src="/static/logo_256.png" alt="AI Catalogs logo">
-  <div class="hero-body">
-  <h2>Your addon link</h2>
-  <p class="sub">In AIOMetadata, paste it under Catalogs → Quick Add. Every catalog you create here shows up there after its first run.</p>
-  <div class="copy-row">
-    <input type="text" id="manifest-url" value="{{ manifest_url }}" readonly class="mono" aria-label="Addon link">
-    <button type="button" data-copy="manifest-url">Copy</button>
-  </div>
+<section class="card addon-bar">
+  <img class="addon-logo" src="/static/logo_256.png" alt="">
+  <div class="addon-body">
+    <h2>Your addon link</h2>
+    <p class="sub">In AIOMetadata, paste it under <b>Catalogs → Quick Add</b>. Catalogs created here show up there after their first run.</p>
+    <div class="copy-row">
+      <input type="text" id="manifest-url" value="{{ manifest_url }}" readonly class="mono" aria-label="Addon link">
+      <button type="button" class="secondary" data-copy="manifest-url">Copy</button>
+    </div>
   </div>
 </section>
 
-<div class="row">
+<div class="list-head">
   <div>
     <h1>Catalogs</h1>
     {% if catalogs|length > 1 %}<p class="muted small">Drag <span class="grip-inline" aria-hidden="true">⠿</span> to set the order your apps show them in.</p>{% endif %}
   </div>
-  {% if catalogs %}<a class="button" href="{{ prefix }}/new">+ New catalog</a>{% endif %}
+  {% if catalogs %}<a class="button" href="{{ prefix }}/new">{{ icon("plus") }}New catalog</a>{% endif %}
 </div>
 
 {% if not catalogs %}
 <div class="empty">
   <h2>No catalogs yet</h2>
   <p>Describe the movies or shows you want in plain words, and AI Catalogs keeps a fresh catalog of them in your apps.</p>
-  <a class="button" href="{{ prefix }}/new">+ Create your first catalog</a>
+  <a class="button" href="{{ prefix }}/new">{{ icon("plus") }}Create your first catalog</a>
 </div>
 {% else %}
-<div class="grid" id="catalog-grid" data-order-url="{{ prefix }}/order" data-csrf="{{ csrf }}">
+<div class="cat-list" id="catalog-grid" data-order-url="{{ prefix }}/order" data-csrf="{{ csrf }}">
   {% for c in catalogs %}
   {% set run = c.recent_runs[0] if c.recent_runs else None %}
   {% set busy = c.open_job is defined and c.open_job %}
-  <div class="cat" data-id="{{ c.catalog_id }}">
-    <div class="row">
-      <div class="row-start">
-        <button type="button" class="grip" aria-label="Drag to reorder {{ c.name }}" title="Drag to reorder">⠿</button>
-        <a class="name" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">{{ c.name }}</a>
+  {% set href = prefix ~ "/catalogs/" ~ c.catalog_id %}
+  <div class="cat{{ ' is-off' if c.state != 'enabled' else '' }}" data-id="{{ c.catalog_id }}">
+    <button type="button" class="grip" aria-label="Drag to reorder {{ c.name }}" title="Drag to reorder">⠿</button>
+    <a class="cat-icon {{ 'series' if c.kind == 'series' else 'movie' }}" href="{{ href }}" tabindex="-1" aria-hidden="true">{{ icon("tv" if c.kind == "series" else "film") }}</a>
+    <div class="cat-main">
+      <div class="cat-title">
+        <a class="name" href="{{ href }}">{{ c.name }}</a>
         <span class="chip kind">{{ "Shows" if c.kind == "series" else "Movies" }}</span>
+        {% if c.last_error %}<span class="chip bad">Needs attention</span>
+        {% elif busy %}<span class="chip busy">Running</span>
+        {% elif c.state == "enabled" %}<span class="chip live">Visible</span>
+        {% else %}<span class="chip off">Hidden</span>{% endif %}
       </div>
-      {% if c.last_error %}<span class="chip bad">Needs attention</span>
-      {% elif busy %}<span class="chip busy">Running</span>
-      {% elif c.state == "enabled" %}<span class="chip live">Visible</span>
-      {% else %}<span class="chip off">Hidden</span>{% endif %}
+      <div class="cat-meta">
+        {% if c.active_snapshot %}<span><b>{{ c.active_snapshot["items"] }}</b> {{ "movies"|say(c.kind) }}</span>
+        <span title="{{ c.active_snapshot.created_at | when }}">Updated {{ c.active_snapshot.created_at | ago }}</span>
+        {% else %}<span>Not run yet: press Run now to fill it</span>{% endif %}
+      </div>
+      <div class="cat-meta faint-row">
+        <span>{{ icon("clock") }}{{ c.schedule_label if c.state == "enabled" else "Paused while hidden" }}</span>
+        {% if run %}<span>Last: {{ run_kind(run) }} · {{ run_status(run) }}</span>{% endif %}
+      </div>
     </div>
-    <a class="meta" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">
-      {% if c.active_snapshot %}{{ c.active_snapshot["items"] }} {{ "movies"|say(c.kind) }} · updated {{ c.active_snapshot.created_at | when }}
-      {% else %}Not run yet: press Run now to fill it{% endif %}
-    </a>
-    {% if run %}<span class="meta">Last: {{ run_kind(run) }} · {{ run_status(run) }}</span>{% endif %}
-    <div class="card-actions">
-      <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/refresh" class="inline">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <button type="submit" class="small" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI now and publish a new version">{{ icon("play") }}Run now</button>
-      </form>
-      <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/dry-run" class="inline">
+    <div class="cat-actions">
+      <form method="post" action="{{ href }}/dry-run" class="inline">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit" class="small secondary" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI and show the results without publishing">{{ icon("flask") }}Test run</button>
       </form>
-      <div class="card-tools">
-        <a class="icon-btn" href="{{ prefix }}/catalogs/{{ c.catalog_id }}" title="Edit" aria-label="Edit {{ c.name }}">{{ icon("edit") }}</a>
-        <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/state" class="inline" data-confirm="Delete “{{ c.name }}”? It disappears from your apps.">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="hidden" name="base_rev" value="{{ c.config_rev }}">
-          <button type="submit" name="state" value="removed" class="icon-btn danger-text" title="Delete" aria-label="Delete {{ c.name }}">{{ icon("trash") }}</button>
-        </form>
-      </div>
+      <form method="post" action="{{ href }}/refresh" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="small" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI now and publish a new version">{{ icon("play") }}Run now</button>
+      </form>
+      <span class="tool-sep" aria-hidden="true"></span>
+      <a class="icon-btn" href="{{ href }}" title="Edit" aria-label="Edit {{ c.name }}">{{ icon("edit") }}</a>
+      <form method="post" action="{{ href }}/state" class="inline" data-confirm="Delete “{{ c.name }}”? It disappears from your apps.">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="base_rev" value="{{ c.config_rev }}">
+        <button type="submit" name="state" value="removed" class="icon-btn danger-text" title="Delete" aria-label="Delete {{ c.name }}">{{ icon("trash") }}</button>
+      </form>
     </div>
   </div>
   {% endfor %}

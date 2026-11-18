@@ -853,6 +853,28 @@ def _simple_cron(cron: str) -> Optional[tuple[str, int, int, Optional[int]]]:
     return None
 
 
+def clock(hour: int, minute: int) -> str:
+    """12-hour time the owner reads: (6, 0) -> '6:00 a.m.', (0, 5) -> '12:05 a.m.', (12, 0) -> '12:00 p.m.'."""
+    return f"{(hour % 12) or 12}:{minute:02d} {'a.m.' if hour < 12 else 'p.m.'}"
+
+
+def schedule_label(schedule: Any) -> str:
+    """A stored ``schedule`` in plain words, for the dashboard: 'Every day at 6:00 a.m.'."""
+    if not schedule:
+        return "Refreshes manually"
+    simple = (
+        _simple_cron(schedule["cron"])
+        if isinstance(schedule, Mapping) and isinstance(schedule.get("cron"), str)
+        else None
+    )
+    if simple is None:
+        return "Custom schedule"
+    mode, hour, minute, day = simple
+    if mode == "daily":
+        return f"Every day at {clock(hour, minute)}"
+    return f"Every {WEEKDAY_NAMES[day or 0]} at {clock(hour, minute)}"
+
+
 def schedule_values(schedule: Any) -> dict[str, str]:
     """The schedule widget's values for a stored ``schedule``."""
     out = {"sched_mode": "manual", "sched_time": "06:00", "sched_day": "5", "sched_tz": "", "sched_cron": ""}

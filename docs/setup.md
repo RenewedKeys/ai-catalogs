@@ -96,8 +96,9 @@ Stremio addon settings path, so proxy rules that protect addon settings pages co
 
 - **Create** a catalog with a name and a plain description of the movies you want; its id is
   made from the name. The form asks for the essentials (catalog size, how often it runs, rating,
-  years, length, language, movies to never include); everything else is under **Advanced
-  settings**. Lists of values are pickers: languages and genres from a list, movies, franchises,
+  years, length, language, movies to never include); a side menu
+  opens each section (the catalog, schedule, rules, then fine-tuning groups, then Runs and
+  Versions). Lists of values are pickers: languages and genres from a list, movies, franchises,
   studios and keywords searched on TMDB as you type, AI models from your provider's model list.
   A description needs no template variables: the size, rules, extra instructions, themes, example
   movies and recently shown movies are all added to the AI request automatically.
@@ -105,12 +106,12 @@ Stremio addon settings path, so proxy rules that protect addon settings pages co
   catalog live at once; **Cancel** drops unsaved changes.
 - **Dashboard**: drag ⠿ to set the order your apps show the catalogs in (it does not change
   a catalog's settings or trigger a run; a file catalog takes its file's order again when its
-  file changes). Each card has **▶ Run now**, **⚗ Test run**, Edit and delete.
+  file changes). Each row has **▶ Run now**, **⚗ Test run**, Edit and delete.
 - **▶ Run now** asks the AI and publishes a new version of the catalog. **⚗ Test run** (a dry
   run) does everything except publishing and shows the movies it picked, how many were
   suggested and passed your rules, and why the rest were turned away. To tune a new catalog,
   leave it on *Manually*, test until you like the picks, then pick a schedule.
-- **Versions** (Activity tab): every run publishes a new version; **Bring back** an earlier one
+- **Versions** (under Activity in the side menu): every run publishes a new version; **Bring back** an earlier one
   (a rollback).
 - **Files vs editor.** A catalog from `catalogs.d` is read-only in the editor until you press
   **Edit it here instead**. From then on the editor owns it and the file is ignored (delete or

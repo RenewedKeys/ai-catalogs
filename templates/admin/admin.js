@@ -294,26 +294,59 @@
     });
   });
 
-  // ---------------------------------------------------------------- tabs
-  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tabs a"));
-  function show(hash) {
-    tabs.forEach(function (t) {
-      var on = t.getAttribute("href") === hash;
-      t.classList.toggle("active", on);
-      var target = document.querySelector(t.getAttribute("href"));
-      if (target) target.classList.toggle("hidden-tab", !on);
+  // ---------------------------------------------------------------- side menu panels
+  // Without this script every panel shows, stacked, and the menu links jump to them.
+  var layout = document.getElementById("layout");
+  if (layout) {
+    var links = Array.prototype.slice.call(layout.querySelectorAll(".sidenav a[data-panel]"));
+    var panels = Array.prototype.slice.call(layout.querySelectorAll(".panel"));
+    var storeKey = "panel:" + window.location.pathname;
+    var ALIASES = { "#activity-tab": "p-runs", "#runs": "p-runs", "#form-tab": "p-catalog" };
+    function panelFor(hash) {
+      if (!hash) return null;
+      if (ALIASES[hash]) return ALIASES[hash];
+      var id = hash.slice(1);
+      return panels.some(function (pn) { return pn.id === id; }) ? id : null;
+    }
+    function openPanel(id, push) {
+      if (!panelFor("#" + id)) id = panels[0].id;
+      panels.forEach(function (pn) { pn.classList.toggle("active", pn.id === id); });
+      var activity = false;
+      links.forEach(function (a) {
+        var on = a.getAttribute("data-panel") === id;
+        a.classList.toggle("active", on);
+        if (on) { a.setAttribute("aria-current", "page"); activity = a.hasAttribute("data-activity"); }
+        else a.removeAttribute("aria-current");
+      });
+      layout.setAttribute("data-mode", activity ? "activity" : "settings");
+      try { sessionStorage.setItem(storeKey, id); } catch (e) { /* private mode */ }
+      if (push && history.replaceState) history.replaceState(null, "", window.location.pathname + "#" + id);
+    }
+    layout.classList.add("js-panels");
+    links.forEach(function (a) {
+      a.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        openPanel(a.getAttribute("data-panel"), true);
+        var nav = layout.querySelector(".sidenav");
+        if (nav && nav.getBoundingClientRect().top < 70) window.scrollTo({ top: layout.offsetTop - 80 });
+        if (a.scrollIntoView && window.matchMedia("(max-width: 860px)").matches) a.scrollIntoView({ inline: "center", block: "nearest" });
+      });
     });
-  }
-  tabs.forEach(function (tab) {
-    tab.addEventListener("click", function (ev) {
-      ev.preventDefault();
-      show(tab.getAttribute("href"));
-      if (history.replaceState) history.replaceState(null, "", tab.getAttribute("href"));
-    });
-  });
-  if (location.hash && tabs.some(function (t) { return t.getAttribute("href") === location.hash; })) {
-    show(location.hash);
-    window.scrollTo(0, 0);  // open the tab, don't jump past the header and notice
+    var stored = null;
+    try { stored = sessionStorage.getItem(storeKey); } catch (e) { /* private mode */ }
+    openPanel(panelFor(location.hash) || (stored && panelFor("#" + stored)) || panels[0].id, false);
+    if (location.hash) {  // open the panel, don't jump past the header and notice
+      window.scrollTo(0, 0);
+      window.addEventListener("load", function () { setTimeout(function () { window.scrollTo(0, 0); }, 0); });
+    }
+    // A required field in a hidden panel would block saving without a word: show its panel.
+    var settingsForm = document.getElementById("form-tab");
+    if (settingsForm) {
+      settingsForm.addEventListener("invalid", function (ev) {
+        var pn = ev.target.closest && ev.target.closest(".panel");
+        if (pn && !pn.classList.contains("active")) openPanel(pn.id, true);
+      }, true);
+    }
   }
 
   // ---------------------------------------------------------------- schedule
@@ -417,18 +450,17 @@
     function onMove(ev) {
       if (!dragging) return;
       ev.preventDefault();
-      // The card whose centre is closest to the pointer decides the slot.
-      var cards = Array.prototype.filter.call(grid.querySelectorAll(".cat"), function (c) { return c !== dragging; });
+      // One row per catalog: the row under the pointer decides the slot, by its vertical middle.
+      var rows = Array.prototype.filter.call(grid.querySelectorAll(".cat"), function (c) { return c !== dragging; });
       var best = null, bestD = Infinity;
-      cards.forEach(function (c) {
+      rows.forEach(function (c) {
         var r = c.getBoundingClientRect();
-        var d = Math.hypot(ev.clientX - (r.left + r.width / 2), ev.clientY - (r.top + r.height / 2));
+        var d = Math.abs(ev.clientY - (r.top + r.height / 2));
         if (d < bestD) { bestD = d; best = c; }
       });
       if (!best) return;
       var r = best.getBoundingClientRect();
-      var sameRow = ev.clientY > r.top && ev.clientY < r.bottom;
-      var after = sameRow ? ev.clientX > r.left + r.width / 2 : ev.clientY > r.top + r.height / 2;
+      var after = ev.clientY > r.top + r.height / 2;
       grid.insertBefore(dragging, after ? best.nextSibling : best);
     }
     function onUp() {
@@ -501,7 +533,7 @@
     var misses = 0;
     function reloadHere() {
       clearInterval(timer);
-      history.replaceState(null, "", window.location.pathname + "#activity-tab");
+      history.replaceState(null, "", window.location.pathname + "#p-runs");
       window.location.reload();
     }
     var timer = setInterval(function () {
