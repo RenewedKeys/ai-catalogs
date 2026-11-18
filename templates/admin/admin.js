@@ -498,17 +498,28 @@
   var runs = document.getElementById("runs");
   if (runs && runs.getAttribute("data-open-job")) {
     var url = runs.getAttribute("data-status-url");
+    var misses = 0;
+    function reloadHere() {
+      clearInterval(timer);
+      history.replaceState(null, "", window.location.pathname + "#activity-tab");
+      window.location.reload();
+    }
     var timer = setInterval(function () {
       fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (st) {
-          if (st && !st.open_job) {
-            clearInterval(timer);
-            history.replaceState(null, "", window.location.pathname + "#activity-tab");
-            window.location.reload();
-          }
+        .then(function (r) {
+          var json = (r.headers.get("content-type") || "").indexOf("application/json") === 0;
+          if (r.ok && json && !r.redirected) return r.json();
+          throw new Error("not the status");
         })
-        .catch(function () {});
+        .then(function (st) {
+          misses = 0;
+          if (st && !st.open_job) reloadHere();
+        })
+        .catch(function () {
+          // Usually the sign-in expired (the proxy answers with its login page). Reloading lets it
+          // sign in again and come back to this page instead of to the status URL.
+          if (++misses >= 2) reloadHere();
+        });
     }, 5000);
   }
 })();

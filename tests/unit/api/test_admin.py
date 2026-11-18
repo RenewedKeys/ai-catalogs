@@ -1421,3 +1421,48 @@ def test_clear_runs_keeps_published_and_recent_real_runs(client):
     assert "msg=nothing_to_clear" in r.headers["location"]
     assert client.post("/configure/catalogs/alpha_list/clear-runs", data={}).status_code == 403
     assert client.post("/configure/catalogs/nope/clear-runs", data={"csrf": token(client)}).status_code == 404
+
+
+# --------------------------------------------------------------------------- after the proxy's sign-in expires
+
+PAGE_LOAD = {"Accept": "text/html,application/xhtml+xml", "Sec-Fetch-Dest": "document"}
+
+
+def test_a_button_url_opened_after_signing_in_again_goes_back_to_the_catalog(proxied):
+    add_catalog()
+    for action in ["refresh", "dry-run", "save", "state", "clear-runs"]:
+        r = proxied.get(f"/configure/catalogs/alpha_list/{action}", headers=PAGE_LOAD)
+        assert r.status_code == 303, action
+        assert r.headers["location"] == "/configure/catalogs/alpha_list?msg=signed_back_in#activity-tab"
+        assert r.headers["cache-control"] == "no-store"
+    r = proxied.get("/configure/new", headers=PAGE_LOAD)
+    assert r.status_code == 200
+    r = proxied.get("/configure/order", headers=PAGE_LOAD)
+    assert r.status_code == 303 and r.headers["location"] == "/configure/?msg=signed_back_in"
+    page = proxied.get("/configure/catalogs/alpha_list?msg=signed_back_in").text
+    assert "press it again" in page
+
+
+def test_the_status_url_opened_as_a_page_goes_back_to_the_catalog(proxied):
+    add_catalog()
+    for headers in (PAGE_LOAD, {"Accept": "text/html"}):
+        r = proxied.get("/configure/catalogs/alpha_list/status.json", headers=headers)
+        assert r.status_code == 303
+        assert r.headers["location"] == "/configure/catalogs/alpha_list?msg=signed_back_in#activity-tab"
+
+
+def test_background_requests_still_get_json(proxied):
+    add_catalog()
+    poll = {"Accept": "application/json", "Sec-Fetch-Dest": "empty"}
+    r = proxied.get("/configure/catalogs/alpha_list/status.json", headers=poll)
+    assert r.status_code == 200 and r.json()["catalog_id"] == "alpha_list"
+    assert proxied.get("/configure/catalogs/alpha_list/refresh", headers=poll).status_code == 405
+    assert proxied.get("/configure/nope", headers=PAGE_LOAD).status_code == 404
+    assert proxied.post("/configure/catalogs/alpha_list/refresh", data={}).status_code == 403  # no CSRF
+
+
+def test_signed_out_page_loads_are_still_refused(proxy_app):
+    add_catalog()
+    c = TestClient(proxy_app, follow_redirects=False)
+    for path in ["/configure/catalogs/alpha_list/refresh", "/configure/catalogs/alpha_list/status.json"]:
+        assert c.get(path, headers=PAGE_LOAD).status_code == 403

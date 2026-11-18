@@ -113,6 +113,7 @@ NOTICES = {
     "deleted": "Catalog deleted.",
     "runs_cleared": "Old runs cleared.",
     "nothing_to_clear": "Nothing to clear.",
+    "signed_back_in": "You're signed in again. If you had just pressed a button, it didn't go through: press it again.",
 }
 
 RUN_KINDS = {"refresh": "Refresh", "dry_run": "Test run"}
@@ -469,6 +470,20 @@ def session_of(request: Request) -> Optional[dict[str, Any]]:
     return unsign("session", request.cookies.get(SESSION_COOKIE))
 
 
+def browser_page_load(request: Request) -> bool:
+    """True for a page the browser opens in the address bar, not the editor's own background requests."""
+    dest = request.headers.get("sec-fetch-dest")
+    if dest:
+        return dest == "document"
+    return "text/html" in (request.headers.get("accept") or "")
+
+
+def page_after_sign_in(path: str) -> str:
+    """Where a browser goes when it lands on a URL that is not a page (see the guard)."""
+    m = re.fullmatch(r"/catalogs/([^/]+)/[^/]+", path)
+    return f"/catalogs/{m.group(1)}" if m and CATALOG_ID_RE.fullmatch(m.group(1)) else "/"
+
+
 def manifest_url(request: Request) -> str:
     base = (settings.PUBLIC_BASE_URL or f"{request.url.scheme}://{request.url.netloc}").rstrip("/")
     return f"{base}/c/{settings.ADDON_ACCESS_TOKEN or PUBLIC_SEGMENT}/manifest.json"
@@ -766,8 +781,17 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
                 response = RedirectResponse(PREFIX + "/login", status_code=303)
             else:
                 response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        elif request.method == "GET" and path.endswith("/status.json") and browser_page_load(request):
+            # The status poll is a background request. When the proxy's sign-in expires it can send
+            # the browser back here after signing in again: show the catalog, not raw JSON.
+            response = redirect(page_after_sign_in(path), "signed_back_in", "activity-tab")
         else:
             response = await call_next(request)
+            if request.method == "GET" and response.status_code == 405 and browser_page_load(request):
+                # A button pressed after the sign-in expired: the proxy returns the browser to the
+                # button's URL with a GET. The action did not run; go back to the page it came from.
+                target = page_after_sign_in(path)
+                response = redirect(target, "signed_back_in", "activity-tab" if target != "/" else "")
         for k, v in SECURITY_HEADERS.items():
             response.headers[k] = v
         return response
