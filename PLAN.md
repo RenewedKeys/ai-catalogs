@@ -1065,3 +1065,6 @@ Owner feedback on the section 26 editor, all in one change:
   ("2 AI requests · 1,900 tokens sent, 2,700 received").
 - Not done here, proposed separately: series (TV shows) next to movies; publishing a ready-built
   container image with numbered releases.
+- **Fewer calls per run**: `pipeline.batch_sizes` folds a remainder under a third of a batch into
+  the other calls and splits evenly (64 -> one call instead of 60 + 4; 160 -> 54/53/53). Calls
+  stay under 80 movies, well within the default `max_tokens`.

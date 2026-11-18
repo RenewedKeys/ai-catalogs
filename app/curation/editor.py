@@ -621,8 +621,9 @@ HELP = {
     "on_shortfall": "",
     "min_accept": 'Only used with "Publish what was found": a refresh that finds fewer movies than this keeps '
     "the previous version instead.",
-    "max_model_calls_per_run": "A refresh asks the AI once, then again for top-ups if too many suggestions were "
-    "rejected. Default 8, which is plenty; lower it to save API calls.",
+    "max_model_calls_per_run": "A run asks the AI once (big catalogs: a few times, about 60 movies per ask). If too "
+    'many suggestions fail your rules, it asks again for more: those are the "extra rounds to fill gaps" in a '
+    "run's details. This caps all of them per run. Default 8; a typical run uses 1 or 2.",
     "max_runs_per_day": "Caps refreshes of this catalog per day, including Run now and test runs. Default 4. "
     "Protects your API quota from accidents.",
     "model": "Type to search the models your AI provider offers. Empty: the server default.",
