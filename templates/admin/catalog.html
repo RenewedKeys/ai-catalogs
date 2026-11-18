@@ -143,7 +143,7 @@
         </div>
       </div>
       <span class="help">Each catalog is either movies or shows.</span>
-      {% if catalog %}<span class="help warning-text" data-switch-note {{ "hidden" if kind == saved_kind else "" }}>Switching an existing catalog: after saving, re-import the addon in AIOMetadata so it uses the new type.</span>{% endif %}
+      {% if catalog %}<span class="help warning-text" data-switch-note {{ "hidden" if kind == saved_kind else "" }}>Switching an existing catalog: after saving, add the addon again with Quick Add in AIOMetadata so it uses the new type.</span>{% endif %}
     </div>
     <p class="sub">{{ say("Name it and describe the movies you want, in your own words.") }}</p>
     {% if by.name %}{{ field(by.name) }}{% endif %}

@@ -49,8 +49,8 @@ Check AIOMetadata's `docs/self-hosting.md` at that commit if it needs more varia
 example a database URI). Run the "without Redis" row by recreating the `aiom` container
 without `REDIS_URL`.
 
-**3. Import.** Open `http://localhost:3232/configure`, go to Custom Manifest Integration,
-and import the manifest URL for the row you are testing. Set the catalog's cache TTL as the
+**3. Import.** Open `http://localhost:3232/configure`, open Catalogs → Quick Add,
+and paste the manifest URL for the row you are testing. Set the catalog's cache TTL as the
 row says. Install the AIOMetadata addon in Stremio.
 
 Swap the list between rows with:

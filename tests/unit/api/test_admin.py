@@ -1271,7 +1271,7 @@ def test_switching_type_clears_stored_ids_and_says_to_reimport(client):
     assert r.status_code == 303 and r.headers["location"].endswith("msg=type_changed")
     stored = json.loads(catalog_row("alpha_list")["definition_json"])
     assert stored["type"] == "series" and "blacklist_tmdb_ids" not in stored and stored["excluded_genre_ids"] == [35]
-    assert "re-import the addon in AIOMetadata" in client.get(r.headers["location"]).text
+    assert "Quick Add in AIOMetadata" in client.get(r.headers["location"]).text
 
 
 def test_movie_catalog_save_is_unchanged(client):
