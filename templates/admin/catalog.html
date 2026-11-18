@@ -202,7 +202,7 @@
         </div>
         <div class="sched-detail" data-sched="daily weekly custom" {{ "hidden" if values.sched_mode == "manual" else "" }}>
           <label for="sched-tz">time zone</label>
-          <input id="sched-tz" name="sched_tz" value="{{ values.sched_tz }}" placeholder="UTC" data-autotz>
+          <input id="sched-tz" name="sched_tz" value="{{ values.sched_tz }}" placeholder="UTC" class="short" data-autotz data-tz-picker>
         </div>
       </div>
       <span class="help">How often the AI makes a new version of this catalog. Manually: only when you press Run now. Tip: start on Manually, use Test run until you like the results, then pick a schedule.</span>
@@ -254,7 +254,7 @@
       </div>
       {% if editable %}
       <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/clear-runs" class="inline"
-        data-confirm="Clear old runs? Test runs and failed runs are removed. Runs that published a version stay.">
+        data-confirm-ok="Clear runs" data-confirm="Clear old runs? Test runs and failed runs are removed. Runs that published a version stay.">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit" class="ghost" title="Remove test runs and failed runs">Clear</button>
       </form>

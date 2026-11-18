@@ -370,6 +370,170 @@
     try { box.value = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { /* UTC */ }
   });
 
+  // ---------------------------------------------------------------- time zone picker
+  // A themed dropdown of common zones (with a search over every zone the browser knows) that
+  // writes the IANA name into the plain text box, which stays the source of truth.
+  var TZ_GROUPS = [
+    ["United States & Canada", [
+      ["America/New_York", "Eastern Time", "New York"], ["America/Chicago", "Central Time", "Chicago"],
+      ["America/Denver", "Mountain Time", "Denver"], ["America/Phoenix", "Mountain Time, no DST", "Phoenix"],
+      ["America/Los_Angeles", "Pacific Time", "Los Angeles"], ["America/Anchorage", "Alaska", "Anchorage"],
+      ["Pacific/Honolulu", "Hawaii", "Honolulu"], ["America/Halifax", "Atlantic Time", "Halifax"],
+      ["America/St_Johns", "Newfoundland", "St. John's"]]],
+    ["Latin America", [
+      ["America/Mexico_City", "Mexico", "Mexico City"], ["America/Bogota", "Colombia", "Bogotá"],
+      ["America/Sao_Paulo", "Brazil", "São Paulo"], ["America/Argentina/Buenos_Aires", "Argentina", "Buenos Aires"]]],
+    ["Europe", [
+      ["Europe/London", "UK & Ireland", "London"], ["Europe/Lisbon", "Portugal", "Lisbon"],
+      ["Europe/Paris", "Central Europe", "Paris"], ["Europe/Berlin", "Central Europe", "Berlin"],
+      ["Europe/Madrid", "Central Europe", "Madrid"], ["Europe/Rome", "Central Europe", "Rome"],
+      ["Europe/Amsterdam", "Central Europe", "Amsterdam"], ["Europe/Stockholm", "Central Europe", "Stockholm"],
+      ["Europe/Athens", "Eastern Europe", "Athens"], ["Europe/Helsinki", "Eastern Europe", "Helsinki"],
+      ["Europe/Istanbul", "Turkey", "Istanbul"], ["Europe/Moscow", "Moscow", "Moscow"]]],
+    ["Africa & Middle East", [
+      ["Africa/Lagos", "West Africa", "Lagos"], ["Africa/Cairo", "Egypt", "Cairo"],
+      ["Africa/Johannesburg", "South Africa", "Johannesburg"], ["Asia/Dubai", "Gulf", "Dubai"]]],
+    ["Asia", [
+      ["Asia/Kolkata", "India", "Kolkata"], ["Asia/Bangkok", "Indochina", "Bangkok"],
+      ["Asia/Singapore", "Singapore", "Singapore"], ["Asia/Manila", "Philippines", "Manila"],
+      ["Asia/Shanghai", "China", "Shanghai"], ["Asia/Hong_Kong", "Hong Kong", "Hong Kong"],
+      ["Asia/Seoul", "Korea", "Seoul"], ["Asia/Tokyo", "Japan", "Tokyo"]]],
+    ["Australia & Pacific", [
+      ["Australia/Perth", "Western Australia", "Perth"], ["Australia/Adelaide", "Central Australia", "Adelaide"],
+      ["Australia/Brisbane", "Queensland", "Brisbane"], ["Australia/Sydney", "Eastern Australia", "Sydney"],
+      ["Pacific/Auckland", "New Zealand", "Auckland"]]],
+    ["Other", [["UTC", "Coordinated Universal Time", "UTC"]]]
+  ];
+  var TZ_KNOWN = {};
+  TZ_GROUPS.forEach(function (g) { g[1].forEach(function (z) { TZ_KNOWN[z[0]] = z; }); });
+  function tzOffset(zone) {
+    try {
+      var part = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "shortOffset" })
+        .formatToParts(new Date()).filter(function (p) { return p.type === "timeZoneName"; })[0];
+      var off = part ? part.value.replace(/^GMT/, "") : "";
+      return "UTC" + (off ? off.replace("-", "\u2212") : "");
+    } catch (e) { return ""; }
+  }
+  function tzCity(zone) { return zone.split("/").pop().replace(/_/g, " "); }
+  function tzName(zone) {
+    var k = TZ_KNOWN[zone];
+    if (k) return zone === "UTC" ? "UTC" : k[1] + " \u00b7 " + k[2];
+    return tzCity(zone) + " \u00b7 " + zone.split("/")[0];
+  }
+  var tzDevice = "";
+  try { tzDevice = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { /* none */ }
+  var tzAll = [];
+  try { tzAll = Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone") : []; } catch (e) { tzAll = []; }
+
+  document.querySelectorAll("input[data-tz-picker]").forEach(function (box) {
+    var wrap = el("div", "tz");
+    var btn = el("button", "tz-button");
+    btn.type = "button";
+    btn.setAttribute("aria-haspopup", "listbox");
+    btn.setAttribute("aria-expanded", "false");
+    var btnName = el("span", "tz-name"), btnOff = el("span", "tz-off");
+    var nameWrap = el("span");
+    nameWrap.appendChild(btnName); nameWrap.appendChild(document.createTextNode(" ")); nameWrap.appendChild(btnOff);
+    btn.appendChild(nameWrap); btn.appendChild(el("span", "chev"));
+    var pop = el("div", "tz-pop");
+    pop.hidden = true;
+    var search = el("input", "tz-search");
+    search.type = "text";
+    search.placeholder = "Search a city or region…";
+    search.autocomplete = "off";
+    search.setAttribute("aria-label", "Search time zones");
+    var list = el("div", "tz-list");
+    list.setAttribute("role", "listbox");
+    pop.appendChild(search); pop.appendChild(list);
+    wrap.appendChild(btn); wrap.appendChild(pop);
+    box.hidden = true;
+    box.parentNode.insertBefore(wrap, box);
+    var lbl = document.querySelector('label[for="' + box.id + '"]');
+    if (lbl) { btn.id = box.id + "-btn"; lbl.setAttribute("for", btn.id); }
+
+    function current() { return box.value.trim() || "UTC"; }
+    function showValue() { btnName.textContent = tzName(current()); btnOff.textContent = tzOffset(current()); }
+    var items = [], active = -1;
+    function addItem(zone, extra) {
+      var b = el("button", "tz-item");
+      b.type = "button";
+      b.setAttribute("role", "option");
+      b.setAttribute("aria-selected", zone === current() ? "true" : "false");
+      var left = el("span", "", extra || tzName(zone));
+      b.appendChild(left);
+      b.appendChild(el("span", "tz-off", tzOffset(zone)));
+      b.addEventListener("click", function () { choose(zone); });
+      items.push(b);
+      list.appendChild(b);
+    }
+    function render() {
+      list.innerHTML = ""; items = []; active = -1;
+      var q = search.value.trim().toLowerCase();
+      if (!q) {
+        if (tzDevice) {
+          list.appendChild(el("div", "tz-group", "This device"));
+          addItem(tzDevice);
+        }
+        TZ_GROUPS.forEach(function (g) {
+          list.appendChild(el("div", "tz-group", g[0]));
+          g[1].forEach(function (z) { addItem(z[0]); });
+        });
+        if (!TZ_KNOWN[current()] && current() !== tzDevice) {
+          list.insertBefore(el("div", "tz-group", "Selected"), list.firstChild);
+          var tmp = items.length; addItem(current());
+          list.insertBefore(items[tmp], list.children[1]);
+        }
+      } else {
+        var seen = {}, hits = [];
+        function test(zone) {
+          if (seen[zone]) return;
+          var k = TZ_KNOWN[zone];
+          var hay = (zone + " " + tzCity(zone) + (k ? " " + k[1] + " " + k[2] : "")).toLowerCase();
+          if (hay.indexOf(q) >= 0) { seen[zone] = 1; hits.push(zone); }
+        }
+        Object.keys(TZ_KNOWN).forEach(test);
+        tzAll.forEach(test);
+        if (/^[a-z_]+\/[a-z_\/]+$/i.test(search.value.trim())) test(search.value.trim());
+        hits.slice(0, 60).forEach(function (z) { addItem(z); });
+        if (!hits.length) list.appendChild(el("div", "tz-empty", "No time zone matches “" + search.value.trim() + "”."));
+      }
+    }
+    function setActive(i) {
+      if (!items.length) return;
+      active = Math.max(0, Math.min(items.length - 1, i));
+      items.forEach(function (b, j) { b.classList.toggle("active", j === active); });
+      items[active].scrollIntoView({ block: "nearest" });
+    }
+    function open() {
+      search.value = ""; render(); pop.hidden = false; btn.setAttribute("aria-expanded", "true");
+      search.focus();
+      var sel = list.querySelector('[aria-selected="true"]');
+      if (sel) sel.scrollIntoView({ block: "center" });
+    }
+    function close(focusBtn) {
+      if (pop.hidden) return;
+      pop.hidden = true; btn.setAttribute("aria-expanded", "false");
+      if (focusBtn) btn.focus();
+    }
+    function choose(zone) {
+      if (box.value !== zone) { box.value = zone; fire(box); box.dispatchEvent(new Event("change", { bubbles: true })); }
+      showValue(); close(true);
+    }
+    btn.addEventListener("click", function () { if (pop.hidden) open(); else close(true); });
+    search.addEventListener("input", render);
+    pop.addEventListener("keydown", function (ev) {
+      if (ev.key === "ArrowDown") { ev.preventDefault(); setActive(active + 1); }
+      else if (ev.key === "ArrowUp") { ev.preventDefault(); setActive(active - 1); }
+      else if (ev.key === "Enter") { ev.preventDefault(); if (items[active >= 0 ? active : 0]) items[active >= 0 ? active : 0].click(); }
+      else if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(true); }
+    });
+    document.addEventListener("mousedown", function (ev) { if (!wrap.contains(ev.target)) close(false); });
+    wrap.addEventListener("focusout", function () {
+      setTimeout(function () { if (!wrap.contains(document.activeElement)) close(false); }, 0);
+    });
+    showValue();
+  });
+
   // ---------------------------------------------------------------- one-time notices
   // "?msg=..." shows a notice once: drop it from the address so a reload or the automatic refresh
   // after a run doesn't bring it back, and fade the notice out after a few seconds.
@@ -420,9 +584,60 @@
       else if (document.execCommand("copy")) done();
     });
   });
+  // A themed confirm box (the browser's own is a white system dialog). Resolves true on OK.
+  var modal = null;
+  function ask(text, okText, danger) {
+    if (!window.HTMLDialogElement) return Promise.resolve(window.confirm(text));
+    if (!modal) {
+      modal = el("dialog", "modal");
+      var body = el("div", "modal-body");
+      body.appendChild(el("span", "modal-icon", "!"));
+      var words = el("div");
+      words.appendChild(el("p", "modal-title"));
+      words.appendChild(el("p", "modal-text"));
+      body.appendChild(words);
+      var actions = el("div", "modal-actions");
+      var no = el("button", "secondary", "Cancel");
+      no.type = "button"; no.value = "no";
+      var yes = el("button", "modal-ok");
+      yes.type = "button"; yes.value = "yes";
+      [no, yes].forEach(function (b) { b.addEventListener("click", function () { modal.close(b.value); }); });
+      actions.appendChild(no); actions.appendChild(yes);
+      modal.appendChild(body); modal.appendChild(actions);
+      modal.addEventListener("click", function (ev) { if (ev.target === modal) modal.close("no"); });  // backdrop
+      document.body.appendChild(modal);
+    }
+    // "Delete “X”? It disappears…" → title "Delete “X”?", text "It disappears…"
+    var cut = text.indexOf("? ");
+    modal.querySelector(".modal-title").textContent = cut > 0 ? text.slice(0, cut + 1) : text;
+    var rest = modal.querySelector(".modal-text");
+    rest.textContent = cut > 0 ? text.slice(cut + 2) : "";
+    rest.hidden = cut <= 0;
+    var ok = modal.querySelector(".modal-ok");
+    ok.textContent = okText || "OK";
+    ok.className = "modal-ok" + (danger ? " danger" : "");
+    modal.classList.toggle("is-danger", !!danger);
+    modal.returnValue = "no";
+    return new Promise(function (resolve) {
+      modal.addEventListener("close", function done() {
+        modal.removeEventListener("close", done);
+        resolve(modal.returnValue === "yes");
+      });
+      modal.showModal();
+      modal.querySelector("button.secondary").focus();
+    });
+  }
   document.querySelectorAll("form[data-confirm]").forEach(function (f) {
     f.addEventListener("submit", function (ev) {
-      if (!window.confirm(f.getAttribute("data-confirm"))) ev.preventDefault();
+      if (f._confirmed) { f._confirmed = false; return; }
+      ev.preventDefault();
+      var submitter = ev.submitter;
+      ask(f.getAttribute("data-confirm"), f.getAttribute("data-confirm-ok"), true).then(function (yes) {
+        if (!yes) return;
+        f._confirmed = true;
+        if (f.requestSubmit) f.requestSubmit(submitter && submitter.form === f ? submitter : undefined);
+        else f.submit();
+      });
     });
   });
   var editForm = document.getElementById("form-tab"), dirty = false;
@@ -433,8 +648,11 @@
   }
   document.querySelectorAll("[data-confirm-leave]").forEach(function (a) {
     a.addEventListener("click", function (ev) {
-      if (dirty && !window.confirm("Discard your changes?")) ev.preventDefault();
-      else dirty = false;
+      if (!dirty) return;
+      ev.preventDefault();
+      ask("Discard your changes? What you changed here is not saved.", "Discard", true).then(function (yes) {
+        if (yes) { dirty = false; window.location.href = a.href; }
+      });
     });
   });
   var preview = document.getElementById("preview");
