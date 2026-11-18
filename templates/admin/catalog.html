@@ -176,6 +176,7 @@
       </div>
       <span class="help">How often the AI makes a new version of this catalog. Manually: only when you press Run now. Tip: start on Manually, use Test run until you like the results, then pick a schedule.</span>
     </div>
+    {% if by.enabled %}{{ field(by.enabled) }}{% endif %}
   </section>
 
   <section class="card">
@@ -211,30 +212,25 @@
 <div id="activity-tab" class="stack hidden-tab">
   <section class="card" id="runs" data-status-url="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/status.json" data-open-job="{{ st.open_job.id if st.open_job else '' }}">
     <div class="section-head">
-      <div>
-        <h2>Runs</h2>
-        <p class="muted small">Run now publishes a new version. Test run shows what a run would pick, without changing what your apps see.</p>
-      </div>
+      <h2>Runs</h2>
+      {% if st.recent_runs or st.open_job %}
       <div class="row-start">
-        <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/dry-run" class="inline">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button type="submit" class="secondary" {{ "disabled" if catalog.state != "enabled" or st.open_job else "" }}>{{ icon("flask") }}Test run</button>
-        </form>
-        <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/refresh" class="inline">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button type="submit" {{ "disabled" if catalog.state != "enabled" or st.open_job else "" }}>{{ icon("play") }}Run now</button>
-        </form>
-      </div>
-    </div>
-
-    {% if st.recent_runs or st.open_job %}
-    <div class="list-tools">
       <div class="filter" role="group" aria-label="Show">
         <button type="button" class="filter-btn active" data-filter="all">All</button>
         <button type="button" class="filter-btn" data-filter="refresh">Runs</button>
         <button type="button" class="filter-btn" data-filter="dry_run">Test runs</button>
       </div>
+      {% if editable %}
+      <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/clear-runs" class="inline"
+        data-confirm="Clear old runs? Test runs and failed runs are removed. Runs that published a version stay.">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="ghost" title="Remove test runs and failed runs">Clear</button>
+      </form>
+      {% endif %}
+      </div>
+      {% endif %}
     </div>
+    {% if st.recent_runs or st.open_job %}
     <div class="rows" id="run-rows">
       {% if st.open_job %}
       <div class="row-item running" id="open-job">
@@ -304,7 +300,7 @@
     <div class="section-head">
       <div>
         <h2>Versions</h2>
-        <p class="muted small">Each run publishes a new version of the catalog. Bring back an earlier one if you liked it better.</p>
+        <p class="muted small">Bring back an earlier version if you liked it better.</p>
       </div>
     </div>
     {% if catalog.snapshots %}
@@ -332,31 +328,6 @@
     {% else %}<p class="muted">No versions yet.</p>{% endif %}
   </section>
 
-  {% if editable %}
-  <section class="card">
-    <h2>Visibility</h2>
-    <p class="sub">{{ "Visible: it shows in your apps and runs on its schedule." if catalog.state == "enabled" else "Hidden: kept here, but not shown in your apps and not run." }}</p>
-    <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/state" class="inline">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">
-      {% if catalog.state == "enabled" %}
-      <button type="submit" name="state" value="disabled" class="secondary">Hide catalog</button>
-      {% else %}
-      <button type="submit" name="state" value="enabled">Make visible</button>
-      {% endif %}
-    </form>
-    <details class="danger-zone">
-      <summary>Delete this catalog…</summary>
-      <p>It disappears from your apps. This can't be undone here.</p>
-      {% if file_present %}<p class="warning">catalogs.d/{{ file_present }} exists: once deleted here, that file brings the catalog back within about 30 seconds.</p>{% endif %}
-      <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/state" data-confirm="Delete this catalog? It disappears from your apps.">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="base_rev" value="{{ catalog.config_rev }}">
-        <button type="submit" name="state" value="removed" class="danger">Delete catalog</button>
-      </form>
-    </details>
-  </section>
-  {% endif %}
 </div>
 {% endif %}
 

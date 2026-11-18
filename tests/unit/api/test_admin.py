@@ -718,7 +718,7 @@ async def test_deleting_an_editor_catalog_releases_its_id_to_a_file(client, edit
     report = await apply_dir(editor_on, tmdb_client_factory=tmdb.client)
     assert [r.status for r in report.files] == ["ignored"]
     page = client.get("/configure/catalogs/alpha_list").text
-    assert "that file brings the catalog back" in page
+    assert "is ignored now that this catalog is managed here" in page
     r = client.post(
         "/configure/catalogs/alpha_list/state", data={"csrf": token(client), "state": "removed", "base_rev": rev}
     )
@@ -1046,7 +1046,7 @@ def test_basic_settings_come_first_and_the_rest_is_advanced(client):
     simple, advanced = page.split('class="advanced"', 1)
     for name in editor.BASIC_FIELDS:
         assert f'name="{name}"' in simple, name
-    for name in ("focus", "weekday_focus", "categories", "enabled", "temperature"):
+    for name in ("focus", "weekday_focus", "categories", "temperature"):
         assert f'name="{name}"' in advanced and f'name="{name}"' not in simple, name
     assert "What kind of movies do you want?" in simple and "catalog id" not in page.lower()
 
@@ -1379,3 +1379,45 @@ def test_failed_runs_explain_themselves(client):
     assert "Publish what was found" in page and "The current version stays." in page
     assert ">shortfall<" not in page
     assert admin_mod.run_error({"error_category": "something_new"})[0] == "Something new"
+
+
+def test_clear_runs_keeps_published_and_recent_real_runs(client):
+    rev = add_catalog()
+    old = db.now_ms() - 3 * 24 * 3600_000
+
+    def run(dry, status, started):
+        with db.session() as conn, db.transaction(conn):
+            cur = conn.execute(
+                "INSERT INTO runs (catalog_id, config_rev, epoch, trigger, dry_run, started_at, status) "
+                "VALUES ('alpha_list', ?, 0, 'admin', ?, ?, ?)",
+                (rev, dry, started, status),
+            )
+            return cur.lastrowid
+
+    test_run = run(1, "ok", db.now_ms())
+    old_failed = run(0, "failed", old)
+    recent_failed = run(0, "failed", db.now_ms())
+    running = run(1, "running", old)
+    published = run(0, "ok", old)
+    with db.session() as conn, db.transaction(conn):
+        publish_snapshot(
+            conn, "alpha_list", [SnapshotItem(imdb_id="tt0000001", title="A")], config_rev=rev, run_id=published
+        )
+        conn.execute(
+            "INSERT INTO llm_ledger (day, catalog_id, run_id, at, kind, model, status) "
+            "VALUES ('2026-11-15', 'alpha_list', ?, ?, 'generate', 'm', 'done')",
+            (old_failed, old),
+        )
+    page = client.get("/configure/catalogs/alpha_list").text
+    assert "/clear-runs" in page
+    r = client.post("/configure/catalogs/alpha_list/clear-runs", data={"csrf": token(client)})
+    assert r.status_code == 303 and "msg=runs_cleared" in r.headers["location"]
+    with db.session() as conn:
+        left = {row[0] for row in conn.execute("SELECT id FROM runs")}
+        ledger = conn.execute("SELECT COUNT(*), MAX(run_id) FROM llm_ledger").fetchone()
+    assert left == {recent_failed, running, published} and test_run not in left
+    assert tuple(ledger) == (1, None)
+    r = client.post("/configure/catalogs/alpha_list/clear-runs", data={"csrf": token(client)})
+    assert "msg=nothing_to_clear" in r.headers["location"]
+    assert client.post("/configure/catalogs/alpha_list/clear-runs", data={}).status_code == 403
+    assert client.post("/configure/catalogs/nope/clear-runs", data={"csrf": token(client)}).status_code == 404

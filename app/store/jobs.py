@@ -480,3 +480,30 @@ def recover_abandoned(conn: sqlite3.Connection, lease: Lease, stale_ms: int = HE
             _retry_or_fail(conn, stale, transient=True, detail="abandoned")
             recovered.append(row["id"])
     return recovered
+
+
+def clear_runs(conn: sqlite3.Connection, catalog_id: str) -> int:
+    """
+    Delete a catalog's finished runs that nothing else needs, for the editor's "Clear" button.
+    Kept: runs that published a version (snapshots and activations point at them), running
+    ones, and real runs from the last 24 hours (the per-catalog daily limit counts those).
+    Ledger rows stay, unlinked, so the daily AI request count is unchanged. Returns the count.
+    """
+    with transaction(conn):
+        keep = (
+            "status = 'running' OR (dry_run = 0 AND started_at >= ?) "
+            "OR id IN (SELECT run_id FROM snapshots WHERE run_id IS NOT NULL) "
+            "OR id IN (SELECT run_id FROM activations WHERE run_id IS NOT NULL)"
+        )
+        ids = [
+            r[0]
+            for r in conn.execute(
+                f"SELECT id FROM runs WHERE catalog_id = ? AND NOT ({keep})", (catalog_id, now_ms() - DAY_MS)
+            )
+        ]
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        conn.execute(f"UPDATE llm_ledger SET run_id = NULL WHERE run_id IN ({marks})", ids)
+        conn.execute(f"DELETE FROM runs WHERE id IN ({marks})", ids)
+        return len(ids)

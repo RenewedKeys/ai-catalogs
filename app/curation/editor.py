@@ -569,6 +569,7 @@ BASIC_FIELDS = (
     "languages",
     "exclude_watched",
     "blacklist_titles",
+    "enabled",
 )
 # Not on the page at all: the dashboard orders catalogs, "Never include" covers TMDB ids, and the
 # prompt-size knobs are internal tuning with defaults that fit everyone. A stored value is kept on save.
@@ -629,8 +630,7 @@ HELP = {
     "languages": "Only movies originally made in these languages. Empty: any language.",
     "exclude_watched": "Leaves out everything you've watched, using your MDBList history.",
     "blacklist_titles": "Type a title and pick it from the suggestions. These never appear.",
-    "enabled": "Off hides the catalog from your apps (AIOMetadata, Stremio …) and pauses its refreshes. "
-    "It stays here.",
+    "enabled": "Off: hidden from your apps and not refreshed. It stays here.",
     "focus": 'One extra sentence sent with every refresh, e.g. "Lean towards hidden gems this time."',
     "weekday_focus": 'A different emphasis per day, e.g. Friday: "something light and funny". '
     "Used instead of the extra instruction on that day. Leave days empty to skip them.",
