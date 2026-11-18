@@ -42,6 +42,7 @@ from app.curation.budget import BudgetLimits
 from app.curation.exclusions import ExclusionInputs, ResolvedExclusions, exclusion_inputs, resolve_exclusions
 from app.curation.limits import limits_from_definition
 from app.curation.llm import LLMSettings
+from app.curation.media import MOVIE_ONLY_KEYS, SERIES, TMDB_TV_GENRES
 from app.curation.prompt import PromptError, validate_definition_prompt
 from app.curation.schedule import parse_schedule
 from app.curation.tmdb_gate import TMDBClient, TMDBError
@@ -70,6 +71,8 @@ class CatalogDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str = Field(min_length=1)
+    # Movies or shows (app.curation.media); absent = movie, so old definitions keep their revision
+    type: Literal["movie", "series"] = "movie"
     name: str | None = Field(default=None, max_length=100)
     enabled: bool = True
     position: int | None = None
@@ -126,6 +129,22 @@ class CatalogDefinition(BaseModel):
             raise ValueError("on_shortfall: publish_partial needs min_accept")
         if self.min_accept is not None and self.min_accept > self.target_count:
             raise ValueError("min_accept must not be greater than target_count")
+        if self.type == SERIES:
+            for key in MOVIE_ONLY_KEYS:
+                if getattr(self, key) not in (None, False):
+                    raise ValueError(f"{key} is for movie catalogs only; remove it for type: series")
+            deny = self.franchise_denylist
+            if isinstance(deny, list) or (
+                isinstance(deny, dict) and (deny.get("collections") or deny.get("collection_ids"))
+            ):
+                raise ValueError("franchise_denylist: collections are for movie catalogs only (TV has none)")
+            unknown = [
+                g
+                for g in (self.excluded_genre_ids if isinstance(self.excluded_genre_ids, list) else ())
+                if isinstance(g, int) and g not in TMDB_TV_GENRES
+            ]
+            if unknown:
+                raise ValueError(f"excluded_genre_ids: {', '.join(map(str, unknown))} not in TMDB's TV genre list")
         return self
 
 

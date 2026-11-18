@@ -1088,3 +1088,138 @@ Owner feedback on the section 26 editor, all in one change:
   `max_prompt_chars` left the page too (`FORM_HIDDEN`); they are internal prompt-size tuning
   whose defaults fit everyone, and a stored value is kept on save. Editor emoji were replaced by
   inline SVG line icons.
+
+## 29. TV shows (design, approved)
+
+Each catalog is either movies or shows, picked with a **Movies / Shows** toggle at the top of the
+catalog form. One catalog never mixes the two (Stremio catalogs have one type, and AIOMetadata
+imports each catalog under one type).
+
+### Data source: TMDB, not TVDB
+
+TMDB is already wired in (client, retries, cache, key handling, pickers) and covers TV with the
+same API shape: `/search/tv`, `/tv/{id}?append_to_response=external_ids,keywords`. The served id
+is the IMDb id (`external_ids.imdb_id`), as for movies, so AIOMetadata resolves metadata the
+same way, and can still use TVDB for show metadata on its own side. TVDB would add a second key,
+client, cache and id space for no gap we found. The one weaker spot: obscure shows on TMDB
+sometimes lack an IMDb id; they are rejected (`imdb_id_missing`) like movies are today. If that
+proves too strict in practice, revisit then.
+
+### Definition
+
+- New key `type: movie | series`, default `movie`. Existing definitions are unchanged (no key =
+  movie, same `config_rev`). Changing it is a normal new revision (epoch bump).
+- For `series`, these keys are **rejected** when set (a clear validation error, and hidden in the
+  editor): `min_runtime` (TMDB's episode length is often empty, so a hard rule would reject most
+  shows), `max_per_collection` (TV has no collections), `director_cap` (shows have no director;
+  a creator cap can come later if wanted), and `franchise_denylist.collections`.
+- Ids stored for one type mean nothing for the other (TMDB movie and TV ids and genre ids are
+  separate lists). Switching type in the editor clears `blacklist_tmdb_ids` and
+  `excluded_genre_ids` and says so; a definition file whose `excluded_genre_ids` are not in the
+  type's genre list is rejected. Name-based keys (`blacklist_titles`, franchise names) are
+  resolved again for the new type.
+- Everything else applies: rating, votes, languages, genres (TV genre list), year range and
+  decade minimums (by **first-air year**), categories, blacklist, franchise companies /
+  keywords / title patterns, history, schedule, budget.
+
+### Validation (`app/curation/tmdb_gate.py`)
+
+- `TMDBGate(rules, media_type="movie" | "tv")`. TV search uses `/search/tv` with
+  `first_air_date_year`, hits read `name` / `original_name` / `first_air_date`; same matching
+  (normalised title or ratio >= 0.9, year +/- 1, most votes wins).
+- TV details: `/tv/{id}` with `external_ids,keywords`. `evaluate()` reads the TV fields: title
+  from `name`, year from `first_air_date`, keywords from `keywords.results`, no runtime /
+  collection / director checks. TV details carry `adult` like movies (checked in TMDB's docs).
+  "Released" for a show = `first_air_date` set and not in the future, and `status` not one of
+  Planned / In Production / Pilot (TMDB documents no enum, so known not-yet-aired values are
+  refused rather than an allow-list that an unlisted value would break).
+- Cache keys get a `tv:` part (`resolve:tv:...`, `details:tv:...`); movie keys stay as they are,
+  so existing cache rows stay valid. TMDB movie and TV ids are separate number spaces, so they
+  must never share a key.
+- Exclusions (`app/curation/exclusions.py`): `blacklist_titles` search `/search/tv` for series;
+  the type is part of `inputs_rev`, so switching type re-resolves.
+
+### Watched (`exclude_watched`)
+
+MDBList `/sync/watched` with `mediatype=show`, cached separately (`mdblist:shows`). A show counts
+as watched when it appears there at all (any watched episode). The exact payload shape is checked
+against MDBList while building; if it cannot be read reliably, the option is hidden for shows in
+this change rather than guessed.
+
+### Prompt (`app/curation/llm.py`, `limits.py`, `prompt.py`, `pipeline.py`)
+
+- System message for series: "You are a TV curator ... real, existing TV series ... `year` is the
+  year the show first aired". JSON key `series` (`{"series": [{title, year, category}]}`), schema
+  name `series_list`; the reply parser already accepts any top-level list key.
+- Constraint and shortfall lines say "show(s)" and "first aired" instead of "film(s)" and
+  "released"; excluded genres are named from TMDB's TV genre list. Movie prompts do not change.
+
+### Storage: migration 7
+
+`ALTER TABLE snapshots ADD COLUMN media_type TEXT NOT NULL DEFAULT 'movie'`. The type a snapshot
+was built for is what it is served as:
+
+- the manifest lists each catalog with its **active snapshot's** type, so a catalog switched from
+  movies to shows keeps serving its last movie list (as movies) until the first show list is
+  published, never a movie list labelled series;
+- the history window only counts activations whose snapshot has the catalog's current type, so a
+  movie's TMDB id never blocks a show with the same number.
+
+### Routes (`app/api/curated.py`)
+
+- Manifest: `types` is the set of types served (`["movie"]`, `["series"]` or both; `["movie"]`
+  when empty), each catalog entry carries its type, `idPrefixes` stays `["tt"]`.
+- `/c/{token}/catalog/{type}/{id}.json` (and the `/{extra}` form) for `movie` and `series`; a
+  type that does not match the catalog's served type is a 404. Metas carry `type: "series"`.
+- AIOMetadata: its import code (`addon/utils/stremthru.js`) passes each meta's own `type` to its
+  metadata lookup and maps `tt` ids to IMDb, so series metas with IMDb ids are handled. Where it
+  builds the catalog URL from the imported manifest was not confirmed from source: assumed to be
+  `{base}/catalog/{type}/{id}.json` (the Stremio convention). Checked end to end against a local
+  AIOMetadata container before merging; if it differs, the route follows what it requests.
+- After switching an existing catalog's type, the owner re-imports the manifest in AIOMetadata
+  (it stores the type per catalog). The editor says so on save.
+
+### Editor (`app/curation/editor.py`, `app/api/admin.py`, `templates/admin/`)
+
+- A Movies / Shows segmented toggle at the top of the form (`type`), default Movies.
+- Shows hides the movie-only fields (`min_runtime`, `max_per_collection`, `director_cap`, the
+  collections part of the franchise picker); hidden values are dropped on save, so a series
+  definition never fails on a leftover. Without JavaScript all fields show and validation
+  explains.
+- Labels and help say "shows" instead of "movies" for a series catalog (rendered server side from
+  the stored type, swapped by the script when the toggle changes).
+- Pickers: `/configure/suggest?kind=tv` for Never include / Example shows; the genre chips use
+  the TV genre list. The dashboard card shows a small Movies / Shows tag.
+
+Other movie wording to make type-aware: `app/api/admin.py` (`friendly_error`, run reason and
+count labels, `_snapshot_movies`), `app/curation/prompt.py` (watched block, sample context),
+`app/curation/runner.py`, `app/curation/__main__.py` (CLI output), `templates/admin/*.html`.
+
+### Tests (`tests/unit`)
+
+Gate (TV search params, TV details evaluation, release status, cache key separation), definition
+validation (type default, movie-only keys rejected for series), limits/prompt wording, LLM system
+message and schema for series, store (migration 7, served type, history split by type), routes
+(manifest types, series route, wrong-type 404), editor (toggle, hidden fields dropped, TV
+suggest). Placeholders only ("Show 1", category "alpha").
+
+### Release
+
+Minor version: `__version__` 1.1.0, tag `v1.1.0` after merge. README: replace "TV shows are
+planned" with a short line; `docs/setup.md` gets the `type` key and the re-import note.
+
+## 30. TV shows: status
+
+Built as designed in section 29 (`app/curation/media.py` holds the type, genre lists and wording),
+released as 1.1.0. Differences from the design:
+
+- **Watched filter not for shows yet.** MDBList's `/sync/watched` show payload is not publicly
+  documented and could not be checked without a key, so `exclude_watched` is refused for series
+  (listed in `media.MOVIE_ONLY_KEYS`, hidden by the toggle) rather than guessed.
+- **AIOMetadata's catalog URL is confirmed**: it builds `/catalog/{type}/{id}.json` from the
+  imported manifest (`configure/src/utils/catalogUtils.ts`, already recorded in
+  `tests/unit/api/test_curated.py`), and its `stremthru.js` passes each meta's own `type` on. The
+  series contract test replays that loop.
+- **Switching genres** keeps the genre ids both lists share (e.g. Comedy, Drama) and drops the
+  rest, instead of clearing them all.
+- `scripts/resolve_blacklist.py` still inspects movie titles only.

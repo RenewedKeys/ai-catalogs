@@ -34,7 +34,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any, Awaitable, Callable, Literal, Mapping
 from urllib.parse import urlsplit
 
 import openai
@@ -103,6 +103,29 @@ ACCURACY REQUIREMENTS:
 - No TV series, episodes or shorts. No duplicates.
 """
 
+# For series catalogs (PLAN.md section 29). The reply key is "series".
+SERIES_SYSTEM_PROMPT = """You are a TV curator. You return lists of real, existing TV series.
+
+ACCURACY REQUIREMENTS:
+- Return only real TV series that exist; never invent titles or years.
+- "year" is the year the series FIRST AIRED, as an integer, and MUST be accurate; it is used
+  to match each series against a database. If unsure, choose the most likely year.
+- "title" is the series' best-known title WITHOUT the year or a season number.
+- "category" is a short label for why the series fits (use the categories you are given,
+  if any; otherwise a one- or two-word label).
+- One entry per series: no individual seasons or episodes, no films, no duplicates.
+"""
+
+
+def list_schema(key: str) -> dict[str, Any]:
+    """The strict output schema with the list under ``key`` (``movies`` or ``series``)."""
+    return {
+        "type": "object",
+        "properties": {key: MOVIE_LIST_SCHEMA["properties"]["movies"]},
+        "required": [key],
+        "additionalProperties": False,
+    }
+
 
 class LLMError(Exception):
     """
@@ -146,10 +169,13 @@ class LLMSettings(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int = Field(default=MAX_TOKENS_DEFAULT, ge=1, le=MAX_TOKENS_CEILING)
     timeout_s: float = Field(default=TIMEOUT_DEFAULT_S, gt=0, le=600)
+    media_type: Literal["movie", "series"] = "movie"  # the definition's ``type``: films or TV series
 
     @classmethod
     def from_definition(cls, definition: Mapping[str, Any]) -> "LLMSettings":
         data = {k: definition[k] for k in ("model", "temperature", "max_tokens", "timeout_s") if k in definition}
+        if definition.get("type") is not None:
+            data["media_type"] = definition["type"]
         return cls.model_validate({k: v for k, v in data.items() if v is not None})
 
 
@@ -237,7 +263,7 @@ _OBJECT_RE = re.compile(r"\{[^{}]*\}")
 
 def _rows_from_document(doc: Any) -> list[Any] | None:
     if isinstance(doc, dict):
-        rows = doc.get("movies")
+        rows = doc.get("movies") if isinstance(doc.get("movies"), list) else doc.get("series")
         if isinstance(rows, list):
             return rows
         for value in doc.values():  # a different top-level key, e.g. {"films": [...]}
@@ -444,12 +470,20 @@ class CuratedLLMService:
 
     # ----------------------------------------------------------------- requests
 
+    @property
+    def series(self) -> bool:
+        return self.llm_settings.media_type == "series"
+
     def _messages(self, prompt: str, request_count: int, mode: str) -> list[dict[str, str]]:
-        system = SYSTEM_PROMPT + f'\nReturn exactly {request_count} films as JSON: {{"movies": [...]}}.'
+        if self.series:
+            system = SERIES_SYSTEM_PROMPT + f'\nReturn exactly {request_count} TV series as JSON: {{"series": [...]}}.'
+        else:
+            system = SYSTEM_PROMPT + f'\nReturn exactly {request_count} films as JSON: {{"movies": [...]}}.'
         if mode != "json_schema":
+            key = "series" if self.series else "movies"
             system += (
                 "\nRespond with ONLY a JSON object, no prose and no code fences, of this shape: "
-                '{"movies": [{"title": "string", "year": 2000, "category": "string"}]}'
+                f'{{"{key}": [{{"title": "string", "year": 2000, "category": "string"}}]}}'
             )
         return [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
 
@@ -466,7 +500,11 @@ class CuratedLLMService:
         if mode == "json_schema":
             params["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {"name": "movie_list", "strict": True, "schema": MOVIE_LIST_SCHEMA},
+                "json_schema": (
+                    {"name": "series_list", "strict": True, "schema": list_schema("series")}
+                    if self.series
+                    else {"name": "movie_list", "strict": True, "schema": MOVIE_LIST_SCHEMA}
+                ),
             }
         elif mode == "json_object":
             params["response_format"] = {"type": "json_object"}
@@ -553,7 +591,7 @@ class CuratedLLMService:
         if rows is None:
             rows = extract_rows(reply.content, tolerant=True)
         if rows is None:
-            raise LLMError("output_invalid", hint="model reply contained no movie list")
+            raise LLMError("output_invalid", hint="model reply contained no list of titles")
         movies, dropped = validate_rows(rows)
         logger.info(
             "[%s] mode=%s attempts=%d rows=%d dropped=%d tokens_in=%d tokens_out=%d finish=%s",

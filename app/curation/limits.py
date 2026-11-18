@@ -21,31 +21,10 @@ from typing import Any, Iterable, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.curation import media
 from app.curation.tmdb_gate import FranchiseDenylist, GateRules
 
-# TMDB's movie genre list (GET /genre/movie/list). Reference data, used only to name
-# excluded genres in the prompt; an id missing here is rendered as "genre id N".
-TMDB_MOVIE_GENRES: dict[int, str] = {
-    28: "Action",
-    12: "Adventure",
-    16: "Animation",
-    35: "Comedy",
-    80: "Crime",
-    99: "Documentary",
-    18: "Drama",
-    10751: "Family",
-    14: "Fantasy",
-    36: "History",
-    27: "Horror",
-    10402: "Music",
-    9648: "Mystery",
-    10749: "Romance",
-    878: "Science Fiction",
-    10770: "TV Movie",
-    53: "Thriller",
-    10752: "War",
-    37: "Western",
-}
+TMDB_MOVIE_GENRES = media.TMDB_MOVIE_GENRES  # kept for existing imports
 
 _DECADE_RE = re.compile(r"^(\d{3})0s?$")
 _LANGUAGE_RE = re.compile(r"^[a-z]{2,3}$")
@@ -70,6 +49,7 @@ class Limits(BaseModel):
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
+    type: str = media.MOVIE  # movie | series: wording and genre names only (definitions validates it)
     min_vote_average: float | None = Field(default=None, ge=0, le=10)
     min_vote_count: int | None = Field(default=None, ge=0)
     year_min: int | None = Field(default=None, ge=1870, le=2100)
@@ -149,20 +129,23 @@ class Limits(BaseModel):
             blacklist_tmdb_ids=frozenset(blacklist_tmdb_ids),
             franchise_denylist=franchise_denylist or FranchiseDenylist(),
             include_credits=self.director_cap is not None,
+            media_type=media.media_type({"type": self.type}),
         )
 
     def lines(self) -> list[str]:
         """One plain-language sentence per limit that is set, in a fixed order."""
+        w = media.words(self.type)
+        genre_names = media.genres(self.type)
         out: list[str] = []
         if self.year_min is not None and self.year_max is not None:
             if self.year_min == self.year_max:
-                out.append(f"Released in {self.year_min}.")
+                out.append(f"{w.released} in {self.year_min}.")
             else:
-                out.append(f"Released between {self.year_min} and {self.year_max} (inclusive).")
+                out.append(f"{w.released} between {self.year_min} and {self.year_max} (inclusive).")
         elif self.year_min is not None:
-            out.append(f"Released in {self.year_min} or later.")
+            out.append(f"{w.released} in {self.year_min} or later.")
         elif self.year_max is not None:
-            out.append(f"Released in {self.year_max} or earlier.")
+            out.append(f"{w.released} in {self.year_max} or earlier.")
         if self.min_vote_average:
             out.append(f"TMDB user rating of at least {self.min_vote_average:g} out of 10.")
         if self.min_vote_count:
@@ -172,8 +155,8 @@ class Limits(BaseModel):
         if self.languages:
             out.append(f"Original language (ISO 639-1) is one of: {', '.join(self.languages)}.")
         if self.excluded_genre_ids:
-            names = [TMDB_MOVIE_GENRES.get(g, f"genre id {g}") for g in self.excluded_genre_ids]
-            out.append(f"No films whose genres include: {', '.join(names)}.")
+            names = [genre_names.get(g, f"genre id {g}") for g in self.excluded_genre_ids]
+            out.append(f"No {w.many} whose genres include: {', '.join(names)}.")
         if self.max_per_collection is not None:
             out.append(
                 f"At most {self.max_per_collection} film(s) from the same franchise or collection "
@@ -182,9 +165,9 @@ class Limits(BaseModel):
         if self.director_cap is not None:
             out.append(f"At most {self.director_cap} film(s) by the same director.")
         for decade, n in self.decade_min.items():
-            out.append(f"At least {n} film(s) released in the {decade}s.")
+            out.append(f"At least {n} {w.one}(s) {w.released_lower} in the {decade}s.")
         for category, n in self.category_min.items():
-            out.append(f'At least {n} film(s) with category "{category}".')
+            out.append(f'At least {n} {w.one}(s) with category "{category}".')
         return out
 
     def prompt_block(self) -> str:
@@ -192,14 +175,17 @@ class Limits(BaseModel):
         lines = self.lines()
         if not lines:
             return ""
-        return "HARD CONSTRAINTS (every film must satisfy all of these):\n" + "\n".join(f"- {line}" for line in lines)
+        return f"HARD CONSTRAINTS (every {media.words(self.type).one} must satisfy all of these):\n" + "\n".join(
+            f"- {line}" for line in lines
+        )
 
     def template_vars(self) -> dict[str, Any]:
         """The ``limits`` template variable: every field, ``None``/empty when unset, plus ``block``."""
         data = self.model_dump()
         data["languages"] = list(self.languages)
         data["excluded_genre_ids"] = list(self.excluded_genre_ids)
-        data["excluded_genres"] = [TMDB_MOVIE_GENRES.get(g, f"genre id {g}") for g in self.excluded_genre_ids]
+        names = media.genres(self.type)
+        data["excluded_genres"] = [names.get(g, f"genre id {g}") for g in self.excluded_genre_ids]
         data["block"] = self.prompt_block()
         return data
 

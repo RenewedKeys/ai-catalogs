@@ -61,6 +61,7 @@ from app.curation.tmdb_gate import (
 )
 from app.curation.watched import WatchedError, WatchedSet, load_watched
 from app.store import db
+from app.curation.media import MOVIE, SERIES, media_type, words
 from app.store.catalogs import SnapshotItem, window_activation_ids
 
 logger = logging.getLogger(__name__)
@@ -122,11 +123,12 @@ class HistoryWindow:
         return [(t, y) for t, y, i in self.prompt_titles if i < size]
 
 
-def load_history(conn, catalog_id: str, runs: int) -> HistoryWindow:
+def load_history(conn, catalog_id: str, runs: int, media_type: str = MOVIE) -> HistoryWindow:
+    """Only lists of ``media_type`` count: TMDB movie and TV ids are separate number spaces."""
     window = HistoryWindow(runs=runs)
     if runs <= 0:
         return window
-    activation_ids = window_activation_ids(conn, catalog_id, runs)
+    activation_ids = window_activation_ids(conn, catalog_id, runs, media_type)
     if not activation_ids:
         window.runs = 0
         return window
@@ -264,11 +266,14 @@ def scaled_quotas(limits: Limits, count: int, target: int) -> dict[int, int]:
     return {d: math.floor(n * count / target) for d, n in limits.decade_min.items()}
 
 
-def unmet_lines(selection: Selection, shortfall: int) -> list[str]:
-    lines = [f"At least {n} more film(s) released in the {d}s." for d, n in sorted(selection.unmet_hard.items())]
-    lines += [f'At least {n} more film(s) with category "{c}".' for c, n in sorted(selection.unmet_soft.items())]
+def unmet_lines(selection: Selection, shortfall: int, kind: str = MOVIE) -> list[str]:
+    w = words(kind)
+    lines = [
+        f"At least {n} more {w.one}(s) {w.released_lower} in the {d}s." for d, n in sorted(selection.unmet_hard.items())
+    ]
+    lines += [f'At least {n} more {w.one}(s) with category "{c}".' for c, n in sorted(selection.unmet_soft.items())]
     if shortfall > 0 and not lines:
-        lines.append(f"{shortfall} more qualifying film(s) not suggested before.")
+        lines.append(f"{shortfall} more qualifying {w.one}(s) not suggested before.")
     return lines
 
 
@@ -363,6 +368,8 @@ class Pipeline:
         self.watched: Optional[WatchedSet] = None  # set at setup when exclude_watched
         self.settings = RunSettings.from_definition(self.definition)
         self.limits = limits_from_definition(self.definition)
+        self.media_type = media_type(self.definition)
+        self.series = self.media_type == SERIES
 
         self.suggestions: dict[tuple[str, Optional[int]], Suggestion] = {}
         self._resolved: dict[tuple[str, Optional[int]], Optional[int]] = {}
@@ -402,7 +409,7 @@ class Pipeline:
 
         def _load():
             with db.session(self.db_path) as conn:
-                return load_history(conn, self.catalog_id, self.settings.history_window_runs)
+                return load_history(conn, self.catalog_id, self.settings.history_window_runs, self.media_type)
 
         self.history = await asyncio.to_thread(_load)
         self.size = self.history.runs
@@ -544,7 +551,7 @@ class Pipeline:
             if reasons:
                 rejects[reasons[0].value] += 1
                 continue
-            candidate = to_candidate(details)
+            candidate = to_candidate(details, self.series)
             if candidate.imdb_id in seen_imdb:
                 counts["duplicate_id"] += 1
                 continue
@@ -604,7 +611,9 @@ class Pipeline:
             request = min(MAX_BATCH, max(gap, 1) * TOPUP_FACTOR)
             before = len(classified.eligible)
             self.topup_rounds += 1
-            if not await self._generate(request, "topup", unmet_lines(selection, self._shortfall(selection))):
+            if not await self._generate(
+                request, "topup", unmet_lines(selection, self._shortfall(selection), self.media_type)
+            ):
                 break
             classified, selection = await self._round()
             stalled = stalled + 1 if len(classified.eligible) <= before else 0
@@ -674,7 +683,7 @@ class Pipeline:
             details = self._details.get(p.tmdb_id)
             if details is None or evaluate(details, self.gate.rules, self.today):
                 raise fail(f"tmdb {p.tmdb_id} fails the gatekeeper")
-            candidate = to_candidate(details)
+            candidate = to_candidate(details, self.series)
             if candidate.imdb_id != p.imdb_id:
                 raise fail(f"tmdb {p.tmdb_id} imdb id changed")
             if any(
@@ -693,7 +702,7 @@ class Pipeline:
                 per_collection[p.collection_id] += 1
             for d in p.director_ids or ():
                 per_director[d] += 1
-            items.append(_snapshot_item(candidate))
+            items.append(_snapshot_item(candidate, self.media_type))
         if self.limits.max_per_collection is not None and any(
             n > self.limits.max_per_collection for n in per_collection.values()
         ):
@@ -757,8 +766,9 @@ def _pool_item(candidate: Candidate, category: str) -> PoolItem:
     )
 
 
-def _snapshot_item(candidate: Candidate) -> SnapshotItem:
+def _snapshot_item(candidate: Candidate, kind: str = MOVIE) -> SnapshotItem:
     return SnapshotItem(
+        media_type=kind,
         imdb_id=candidate.imdb_id,
         title=candidate.title,
         year=candidate.year or None,

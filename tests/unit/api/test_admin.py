@@ -1231,6 +1231,69 @@ def test_top_bar_shows_the_version(client):
     assert f">v{__version__}</a>" in client.get("/configure/").text
 
 
+# --------------------------------------------------------------------------- movies / shows (section 29)
+
+
+def test_new_page_has_the_movies_shows_toggle(client):
+    page = client.get("/configure/new").text
+    assert 'name="type" value="movie" checked' in page and 'name="type" value="series"' in page
+    assert 'data-series="What kind of shows do you want?"' in page
+    assert "data-options-series=" in page and "Reality" in page
+
+
+def test_create_a_shows_catalog_drops_movie_only_fields(client):
+    vals = values_for({"prompt": PROMPT, "min_runtime": 90, "director_cap": 2, "excluded_genre_ids": [18, 27]})
+    vals.update(type="series", franchise_denylist='{"collections": ["Saga Nine"], "title_patterns": ["^x$"]}')
+    r = post_form(client, "/configure/new", vals, catalog_id="show_one", action="save")
+    assert r.status_code == 303, r.text
+    stored = json.loads(catalog_row("show_one")["definition_json"])
+    assert stored == {
+        "prompt": PROMPT,
+        "type": "series",
+        "excluded_genre_ids": [18],
+        "franchise_denylist": {"title_patterns": ["^x$"]},
+    }
+    page = client.get("/configure/catalogs/show_one").text
+    assert 'name="type" value="series" checked' in page and ">What kind of shows do you want?<" in page
+
+
+def test_switching_type_clears_stored_ids_and_says_to_reimport(client):
+    add_catalog(blacklist_tmdb_ids=[5], excluded_genre_ids=[27, 35])
+    vals = values_for(json.loads(catalog_row("alpha_list")["definition_json"]))
+    vals["type"] = "series"
+    r = post_form(
+        client,
+        "/configure/catalogs/alpha_list/save",
+        vals,
+        base_rev=catalog_row("alpha_list")["config_rev"],
+        action="save",
+    )
+    assert r.status_code == 303 and r.headers["location"].endswith("msg=type_changed")
+    stored = json.loads(catalog_row("alpha_list")["definition_json"])
+    assert stored["type"] == "series" and "blacklist_tmdb_ids" not in stored and stored["excluded_genre_ids"] == [35]
+    assert "re-import the addon in AIOMetadata" in client.get(r.headers["location"]).text
+
+
+def test_movie_catalog_save_is_unchanged(client):
+    rev = add_catalog(min_runtime=90)
+    vals = values_for(json.loads(catalog_row("alpha_list")["definition_json"]))
+    r = post_form(client, "/configure/catalogs/alpha_list/save", vals, base_rev=rev, action="save")
+    assert r.status_code == 303 and catalog_row("alpha_list")["config_rev"] == rev
+
+
+def test_suggest_tv_searches_shows(client, tmdb):
+    r = client.get("/configure/suggest", params={"kind": "tv", "q": "Show 3"})
+    assert r.status_code == 200 and r.json()[0]["label"].startswith("Show 3 (")
+    assert tmdb.requests[-1].url.path.endswith("/search/tv")
+
+
+def test_dashboard_tags_each_catalog_with_its_type(client):
+    add_catalog(cid="movie_one")
+    add_catalog(cid="show_one", type="series")
+    page = client.get("/configure/").text
+    assert 'class="chip kind">Shows<' in page and 'class="chip kind">Movies<' in page
+
+
 def test_internal_prompt_knobs_are_hidden_but_kept(client):
     rev = add_catalog(history_prompt_limit=40, max_prompt_chars=9000)
     page = client.get("/configure/catalogs/alpha_list").text

@@ -31,6 +31,7 @@ from typing import Any, Iterable, Mapping
 
 from rapidfuzz import fuzz
 
+from app.curation.media import MOVIE, SERIES, media_type
 from app.curation.tmdb_gate import (
     SIMILARITY_THRESHOLD,
     FranchiseDenylist,
@@ -80,21 +81,27 @@ class TitleQuery:
 # --------------------------------------------------------------------------- matching
 
 
-def title_candidates(query: TitleQuery, results: list[dict]) -> list[dict]:
-    """Exact normalised matches by votes; fuzzy (>= 0.9) ones only when there is no exact match."""
+def title_candidates(query: TitleQuery, results: list[dict], series: bool = False) -> list[dict]:
+    """
+    Exact normalised matches by votes; fuzzy (>= 0.9) ones only when there is no exact match.
+    ``series``: TV results (``name`` / ``original_name`` / ``first_air_date``).
+    """
+    title_key, original_key, date_key = (
+        ("name", "original_name", "first_air_date") if series else ("title", "original_title", "release_date")
+    )
     norm = normalize_title(query.title)
     exact, fuzzy, seen = [], [], set()
     for r in results:
         if not isinstance(r.get("id"), int) or r["id"] in seen:
             continue
         seen.add(r["id"])
-        year = parse_year(r.get("release_date"))
+        year = parse_year(r.get(date_key))
         if query.year is not None and (year is None or abs(year - query.year) > 1):
             continue
-        names = [normalize_title(n) for n in (r.get("title"), r.get("original_title")) if n]
+        names = [normalize_title(n) for n in (r.get(title_key), r.get(original_key)) if n]
         entry = {
             "id": r["id"],
-            "title": r.get("title") or "",
+            "title": r.get(title_key) or "",
             "year": year,
             "vote_count": int(r.get("vote_count") or 0),
         }
@@ -117,9 +124,9 @@ def named_candidates(query: str, results: list[dict]) -> list[dict]:
     return out
 
 
-def pick_titles(query: TitleQuery, results: list[dict]) -> list[int]:
+def pick_titles(query: TitleQuery, results: list[dict], series: bool = False) -> list[int]:
     """The automatic pick for one blacklist title (module docstring)."""
-    exact = [c for c in title_candidates(query, results) if not c["fuzzy"]]
+    exact = [c for c in title_candidates(query, results, series) if not c["fuzzy"]]
     if query.year is not None:
         return [exact[0]["id"]] if exact else []
     return [c["id"] for c in exact[:MAX_TITLE_PICKS]]
@@ -133,9 +140,9 @@ def pick_named(query: str, results: list[dict]) -> list[int]:
     return [c["id"] for c in (equal or candidates)[:MAX_NAMED_PICKS]]
 
 
-async def search_titles(client: TMDBClient, query: TitleQuery) -> list[dict]:
+async def search_titles(client: TMDBClient, query: TitleQuery, series: bool = False) -> list[dict]:
     params = {"query": query.title, "include_adult": "false", "language": "en-US", "page": "1"}
-    return (await client.get("/search/movie", params)).get("results") or []
+    return (await client.get("/search/tv" if series else "/search/movie", params)).get("results") or []
 
 
 async def search_named(client: TMDBClient, kind: str, query: str) -> list[dict]:
@@ -158,6 +165,11 @@ class ExclusionInputs:
     collection_ids: tuple[int, ...] = ()
     company_ids: tuple[int, ...] = ()
     keyword_ids: tuple[int, ...] = ()
+    media_type: str = MOVIE  # movie | series: titles are searched in TMDB's movie or TV list
+
+    @property
+    def series(self) -> bool:
+        return self.media_type == SERIES
 
     @property
     def needs_tmdb(self) -> bool:
@@ -172,6 +184,8 @@ class ExclusionInputs:
             "companies": list(self.companies),
             "keywords": list(self.keywords),
         }
+        if self.series:  # only for shows, so the revision of every movie definition stays as it was
+            doc["type"] = SERIES
         return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -235,6 +249,7 @@ def exclusion_inputs(definition: Mapping[str, Any]) -> ExclusionInputs:
         collection_ids=_ids(deny.get("collection_ids"), "franchise_denylist.collection_ids"),
         company_ids=_ids(deny.get("company_ids"), "franchise_denylist.company_ids"),
         keyword_ids=_ids(deny.get("keyword_ids"), "franchise_denylist.keyword_ids"),
+        media_type=media_type(definition),
     )
 
 
@@ -289,7 +304,7 @@ async def resolve_exclusions(client: TMDBClient | None, inputs: ExclusionInputs)
     assert client is not None, "TMDB client required to resolve exclusion names"
 
     async def one_title(q: TitleQuery) -> tuple[str, list[int]]:
-        return q.label, pick_titles(q, await search_titles(client, q))
+        return q.label, pick_titles(q, await search_titles(client, q, inputs.series), inputs.series)
 
     async def one_named(section: str, name: str) -> tuple[str, str, list[int]]:
         kind = NAMED_SECTIONS[section][0]

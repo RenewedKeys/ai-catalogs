@@ -390,6 +390,12 @@ details.inline-picks > summary { font-size: 13px; }
 .version { color: var(--faint); font-size: 12px; font-weight: 600; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; }
 .version:hover { color: var(--fg); border-color: var(--line-strong); }
 
+/* Movies / Shows (PLAN.md section 29) */
+.chip.kind { color: var(--muted); }
+.chip.kind::before { display: none; }
+form[data-kind="series"] [data-movie-only] { display: none; }
+.warning-text { color: var(--warn); }
+
 /* ---- line icons */
 .ico { flex: none; display: block; }
 button .ico, .button .ico { margin-left: -2px; }

@@ -17,6 +17,13 @@
   }
   function fire(field) { field.dispatchEvent(new Event("input", { bubbles: true })); }
 
+  // Movies or shows: the catalog form's toggle (PLAN.md section 29).
+  var catalogForm = document.getElementById("form-tab");
+  function mediaKind() {
+    return catalogForm && catalogForm.getAttribute("data-kind") === "series" ? "series" : "movie";
+  }
+  function titleSearchKind() { return mediaKind() === "series" ? "tv" : "movie"; }
+
   // ---------------------------------------------------------------- suggestion dropdown
   function attachSuggest(input, kind, onPick) {
     var box = el("div", "suggest-list");
@@ -43,7 +50,8 @@
       if (q.length < 2) { items = []; render(); return; }
       timer = setTimeout(function () {
         var mine = ++seq;
-        fetch(PREFIX + "/suggest?kind=" + encodeURIComponent(kind) + "&q=" + encodeURIComponent(q), {
+        var k = typeof kind === "function" ? kind() : kind;
+        fetch(PREFIX + "/suggest?kind=" + encodeURIComponent(k) + "&q=" + encodeURIComponent(q), {
           credentials: "same-origin", headers: { Accept: "application/json" }
         }).then(function (r) { return r.ok ? r.json() : []; })
           .then(function (data) { if (mine === seq) { items = data || []; active = -1; render(); } })
@@ -144,26 +152,37 @@
 
   var CHIP_HINTS = { movie: "Type a movie title…", free: "Type a theme and press Enter", languages: "Add a language…", genres: "Add a genre…" };
 
+  function buildChips(field, source) {
+    // "lines" fields hold one value per line; "yaml" fields (e.g. Never include) hold a list.
+    var asList = field.getAttribute("data-format") === "yaml";
+    var values;
+    if (asList) {
+      var parsed = jsonOf(field);
+      values = (Array.isArray(parsed) ? parsed : []).map(function (v) {
+        if (v && typeof v === "object") return v.year ? v.title + " (" + v.year + ")" : String(v.title || "");
+        return String(v);
+      }).filter(Boolean);
+    } else {
+      values = lines(field.value);
+    }
+    var opts = { options: optionsOf(field), kind: source === "movie" ? titleSearchKind : null, free: source === "free" };
+    var node = chipEditor(values, opts, function (v) {
+      field.value = asList ? (v.length ? JSON.stringify(v) : "") : v.join("\n");
+      fire(field);
+    }, source === "movie" ? (mediaKind() === "series" ? "Type a show title…" : CHIP_HINTS.movie) : CHIP_HINTS[source]);
+    var input = node.querySelector(".chip-input");
+    if (input && source === "movie") {
+      input.setAttribute("data-ph-movie", CHIP_HINTS.movie);
+      input.setAttribute("data-ph-series", "Type a show title…");
+    }
+    field._widget = node;
+    mount(field, node);
+  }
+
   document.querySelectorAll("[data-widget]").forEach(function (field) {
     var widget = field.getAttribute("data-widget"), source = field.getAttribute("data-source");
     if (widget === "chips") {
-      // "lines" fields hold one value per line; "yaml" fields (e.g. Never include) hold a list.
-      var asList = field.getAttribute("data-format") === "yaml";
-      var values;
-      if (asList) {
-        var parsed = jsonOf(field);
-        values = (Array.isArray(parsed) ? parsed : []).map(function (v) {
-          if (v && typeof v === "object") return v.year ? v.title + " (" + v.year + ")" : String(v.title || "");
-          return String(v);
-        }).filter(Boolean);
-      } else {
-        values = lines(field.value);
-      }
-      var opts = { options: optionsOf(field), kind: source === "movie" ? "movie" : null, free: source === "free" };
-      mount(field, chipEditor(values, opts, function (v) {
-        field.value = asList ? (v.length ? JSON.stringify(v) : "") : v.join("\n");
-        fire(field);
-      }, CHIP_HINTS[source]));
+      buildChips(field, source);
     } else if (widget === "suggest") {
       var holder = el("div", "suggest-wrap");
       field.parentNode.insertBefore(holder, field);
@@ -176,6 +195,7 @@
        ["companies", "company", "Studios", "Type a studio…"],
        ["keywords", "keyword", "Keywords", "Type a TMDB keyword…"]].forEach(function (spec) {
         var row = el("div", "sub-row");
+        if (spec[0] === "collections") row.setAttribute("data-movie-only", "");  // TV has no collections
         row.appendChild(el("span", "sub-label", spec[2]));
         var vals = (obj[spec[0]] || []).map(String);
         row.appendChild(chipEditor(vals, { kind: spec[1] }, function (v) {
@@ -402,6 +422,38 @@
           grid.insertBefore(card.nextElementSibling, card); moved = true;
         }
         if (moved) { ev.preventDefault(); saveOrder(); grip.focus(); }
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------- Movies / Shows toggle
+  if (catalogForm) {
+    catalogForm.querySelectorAll("input[name=type]").forEach(function (radio) {
+      radio.addEventListener("change", function () {
+        if (!radio.checked) return;
+        var kind = radio.value === "series" ? "series" : "movie";
+        catalogForm.setAttribute("data-kind", kind);
+        document.querySelectorAll("[data-movie][data-series]").forEach(function (e) {
+          e.textContent = e.getAttribute("data-" + kind);
+        });
+        document.querySelectorAll("[data-ph-movie][data-ph-series]").forEach(function (e) {
+          e.placeholder = e.getAttribute("data-ph-" + kind);
+        });
+        // Genre lists differ: keep the genres both lists have, offer the new type's list.
+        document.querySelectorAll("[data-options-series]").forEach(function (field) {
+          var options = field.getAttribute("data-options-" + kind);
+          var ids = (JSON.parse(options) || []).map(function (o) { return String(o[0]); });
+          field.setAttribute("data-options", options);
+          field.value = lines(field.value).filter(function (v) { return ids.indexOf(v) >= 0; }).join("\n");
+          if (field._widget) {
+            field._widget.remove();
+            buildChips(field, field.getAttribute("data-source"));
+          }
+          fire(field);
+        });
+        var note = catalogForm.querySelector("[data-switch-note]");
+        var saved = catalogForm.getAttribute("data-saved-kind");
+        if (note) note.hidden = !saved || saved === kind;
       });
     });
   }

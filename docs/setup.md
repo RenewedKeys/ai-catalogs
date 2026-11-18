@@ -39,6 +39,16 @@ Run these inside the worker container (`docker compose exec worker python -m app
 | `status --check` | Exit 0 if this container's worker is alive (the worker's health check) |
 | `backup PATH` | Online copy of the database, safe while everything runs |
 
+### Movies or shows
+
+`type: series` makes a catalog of TV shows (`type: movie`, the default, can be left out). Shows
+are looked up on TMDB's TV list and served to AIOMetadata as `series`, with their IMDb ids.
+`year_min` / `year_max` and `decade_min` use the year a show first aired; a show counts as
+released once it has aired and its TMDB status is not Planned, In Production or Pilot.
+`min_runtime`, `max_per_collection`, `director_cap`, `exclude_watched` and franchise
+`collections` are for movies only and are refused for shows; `excluded_genre_ids` use TMDB's TV
+genre ids. The editor's Movies / Shows toggle hides what does not apply.
+
 A run that cannot deliver `target_count` qualifying, unrepeated films keeps the previous list
 (`history_mode` and `on_shortfall` in the definition change that). Model calls are limited per
 run (`max_model_calls_per_run`, default 8) and per day across all catalogs
@@ -169,6 +179,10 @@ The manifest id, catalog ids, token and base URL are frozen into AIOMetadata's c
 import; changing any of them means importing again. A catalog only appears in the manifest
 once it has a list, so it cannot be imported empty.
 
+Each catalog is imported with its type (movie or series). After switching an existing catalog
+between movies and shows, import the manifest again: until the first list of the new type is
+published, the catalog keeps serving its previous list under its previous type.
+
 [docs/aiometadata-integration.md](aiometadata-integration.md) is the end-to-end check
 against a real AIOMetadata.
 
@@ -215,7 +229,7 @@ a failure and its HTTP status, not the provider's message, which can quote a key
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL` | OpenRouter (default) or another OpenAI-compatible API |
 | `GEMINI_API_KEY` | Google's Gemini API instead (used when `OPENAI_API_KEY` is empty; model ids then have no `google/` prefix) |
 | `TMDB_API_KEY` | TMDB v4 read access token |
-| `MDBLIST_API_KEY` | Optional. MDBList API key, used only by catalogs with `exclude_watched: true` (skip films you have watched) |
+| `MDBLIST_API_KEY` | Optional. MDBList API key, used only by catalogs with `exclude_watched: true` (skip films you have watched; movie catalogs only) |
 | `PUBLIC_BASE_URL` | Externally reachable URL of this server |
 | `ADDON_ACCESS_TOKEN` | Secret path segment of the addon URLs (16+ characters); unset means `public` |
 | `OPS_TOKEN` | Bearer token for `/ops`; unset disables it |

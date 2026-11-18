@@ -27,6 +27,7 @@ import typing
 from dataclasses import dataclass, field, fields as dataclass_fields
 from typing import Any, Callable, Literal, Mapping, Optional
 
+from app.curation import media
 from app.curation.budget import BudgetLimits
 from app.curation.definitions import CatalogDefinition, DefinitionError, parse_yaml, validate_definition
 from app.curation.exclusions import ResolvedExclusions, resolve_exclusions
@@ -41,7 +42,7 @@ MAX_YAML_CHARS = 256 * 1024
 
 # Section headings only. A field missing here lands in "Other"; it still gets a widget.
 GROUPS: list[tuple[str, tuple[str, ...]]] = [
-    ("Catalog", ("name", "enabled", "position", "prompt")),
+    ("Catalog", ("type", "name", "enabled", "position", "prompt")),
     (
         "Prompt variables",
         (
@@ -361,7 +362,39 @@ def definition_from_form(form: Mapping[str, Optional[str]], base: Mapping[str, A
         raise DefinitionError("; ".join(errors))
     known = set(CatalogDefinition.model_fields)
     out.update({k: v for k, v in base.items() if k not in known})
-    return out
+    return fit_to_type(out, base)
+
+
+def fit_to_type(definition: dict[str, Any], base: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    Drop what has no meaning for the definition's type (PLAN.md section 29), so the hidden
+    movie-only fields never make a show catalog fail: the movie-only keys and franchise
+    collections for shows; on a switch of type, stored TMDB ids (movie and TV ids are separate
+    number spaces) and genres the new type's list does not have.
+    """
+    kind = media.media_type(definition)
+    if base and media.media_type(base) != kind:
+        definition.pop("blacklist_tmdb_ids", None)
+    genres = definition.get("excluded_genre_ids")
+    if isinstance(genres, list) and kind != media.media_type(base):
+        kept = [g for g in genres if g in media.genres(kind)]
+        if kept:
+            definition["excluded_genre_ids"] = kept
+        else:
+            definition.pop("excluded_genre_ids")
+    if kind == media.SERIES:
+        for key in media.MOVIE_ONLY_KEYS:
+            definition.pop(key, None)
+        deny = definition.get("franchise_denylist")
+        if isinstance(deny, list):
+            definition.pop("franchise_denylist")
+        elif isinstance(deny, dict) and ("collections" in deny or "collection_ids" in deny):
+            deny = {k: v for k, v in deny.items() if k not in ("collections", "collection_ids")}
+            if deny:
+                definition["franchise_denylist"] = deny
+            else:
+                definition.pop("franchise_denylist")
+    return definition
 
 
 # ------------------------------------------------------------------ check and save
@@ -522,6 +555,7 @@ def set_state(catalog_id: str, state: str, *, base_rev: str, db_path: Optional[s
 
 # Shown up front, in this order, with plain labels. Everything else is under "Advanced".
 BASIC_FIELDS = (
+    "type",
     "name",
     "prompt",
     "target_count",
@@ -541,6 +575,7 @@ FORM_HIDDEN = frozenset(
 )
 
 LABELS = {
+    "type": "Catalog of",
     "name": "Name",
     "prompt": "What kind of movies do you want?",
     "target_count": "Movies in the catalog",
@@ -638,6 +673,7 @@ HELP = {
 }
 
 OPTION_LABELS = {
+    "type": {"movie": "Movies", "series": "Shows"},
     "history_mode": {
         "strict": "Keep the previous version (never repeat)",
         "relax": "Allow the oldest repeats back in",
@@ -724,37 +760,38 @@ LANGUAGES = [
     ("vi", "Vietnamese"),
     ("is", "Icelandic"),
 ]
-GENRES = [
-    (28, "Action"),
-    (12, "Adventure"),
-    (16, "Animation"),
-    (35, "Comedy"),
-    (80, "Crime"),
-    (99, "Documentary"),
-    (18, "Drama"),
-    (10751, "Family"),
-    (14, "Fantasy"),
-    (36, "History"),
-    (27, "Horror"),
-    (10402, "Music"),
-    (9648, "Mystery"),
-    (10749, "Romance"),
-    (878, "Science Fiction"),
-    (10770, "TV Movie"),
-    (53, "Thriller"),
-    (10752, "War"),
-    (37, "Western"),
-]
+GENRES = list(media.TMDB_MOVIE_GENRES.items())
+SERIES_GENRES = sorted(media.TMDB_TV_GENRES.items(), key=lambda g: g[1])
+MOVIE_ONLY_FIELDS = frozenset(media.MOVIE_ONLY_KEYS)
 DECADES = list(range(1920, date.today().year // 10 * 10 + 1, 10))
 
 
-def label_of(name: str) -> str:
-    return LABELS.get(name, name.replace("_", " ").capitalize())
+_MOVIE_WORDS = re.compile(r"\b([Mm])ovie(s?)\b")
 
 
-def help_of(spec: "FieldSpec") -> str:
+def say(text: str, kind: str = media.MOVIE) -> str:
+    """Page text for a catalog type: "movies" becomes "shows" for a series catalog."""
+    if kind != media.SERIES:
+        return text
+    return _MOVIE_WORDS.sub(lambda m: ("S" if m.group(1) == "M" else "s") + "how" + m.group(2), text)
+
+
+# Labels that change for a show catalog beyond "movies" -> "shows".
+SERIES_LABELS = {
+    "year_min": "First aired from",
+    "year_max": "First aired until",
+}
+
+
+def label_of(name: str, kind: str = media.MOVIE) -> str:
+    if kind == media.SERIES and name in SERIES_LABELS:
+        return SERIES_LABELS[name]
+    return say(LABELS.get(name, name.replace("_", " ").capitalize()), kind)
+
+
+def help_of(spec: "FieldSpec", kind: str = media.MOVIE) -> str:
     if spec.name in HELP:
-        return HELP[spec.name]
+        return say(HELP[spec.name], kind)
     if spec.minimum is not None and spec.maximum is not None:
         return f"{_num_text(spec.minimum)} to {_num_text(spec.maximum)}."
     if spec.kind == "lines":

@@ -18,6 +18,7 @@ from app.store.db import now_ms
 CATALOG_ID_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
 IMDB_ID_RE = re.compile(r"^tt\d+$")
 
+MEDIA_TYPES = ("movie", "series")
 MAX_ITEMS = 250  # PLAN.md section 9: the whole snapshot goes out in one response
 KEEP_PAYLOADS = 10  # snapshot payloads kept per catalog; activations and history are never pruned
 
@@ -34,10 +35,11 @@ class SnapshotItem:
     tmdb_id: Optional[int] = None
     poster: Optional[str] = None
     description: Optional[str] = None
+    media_type: str = "movie"  # Stremio type: movie | series (PLAN.md section 29)
 
     def meta(self) -> dict[str, Any]:
         """The Stremio meta served for this item (PLAN.md section 9)."""
-        meta: dict[str, Any] = {"id": self.imdb_id, "type": "movie", "name": self.title}
+        meta: dict[str, Any] = {"id": self.imdb_id, "type": self.media_type, "name": self.title}
         if self.year:
             meta["releaseInfo"] = str(self.year)
         if self.poster:
@@ -158,6 +160,10 @@ def publish_snapshot(
     """
     _require_tx(conn)
     items = _validated_items(items)
+    kinds = {i.media_type for i in items}
+    if len(kinds) != 1 or not kinds <= set(MEDIA_TYPES):
+        raise StoreError("a snapshot holds items of one type, movie or series")
+    media_type = kinds.pop()
     row = conn.execute("SELECT config_rev FROM catalog_defs WHERE catalog_id = ?", (catalog_id,)).fetchone()
     if row is None:
         raise StoreError(f"unknown catalog {catalog_id!r}")
@@ -168,10 +174,18 @@ def publish_snapshot(
     conn.execute("UPDATE snapshots SET status = 'superseded' WHERE catalog_id = ? AND status = 'active'", (catalog_id,))
     snapshot_id = conn.execute(
         """
-        INSERT INTO snapshots (catalog_id, created_at, run_id, config_rev, status, item_count, metas_json)
-        VALUES (?, ?, ?, ?, 'active', ?, ?)
+        INSERT INTO snapshots (catalog_id, created_at, run_id, config_rev, status, item_count, metas_json, media_type)
+        VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
         """,
-        (catalog_id, now, run_id, config_rev, len(items), json.dumps([i.meta() for i in items], ensure_ascii=False)),
+        (
+            catalog_id,
+            now,
+            run_id,
+            config_rev,
+            len(items),
+            json.dumps([i.meta() for i in items], ensure_ascii=False),
+            media_type,
+        ),
     ).lastrowid
     activation_id = conn.execute(
         "INSERT INTO activations (catalog_id, snapshot_id, run_id, activated_at) VALUES (?, ?, ?, ?)",
@@ -199,17 +213,18 @@ def publish_snapshot(
 class ServedCatalog:
     catalog_id: str
     name: str
+    media_type: str = "movie"  # the active snapshot's type: what is actually served
 
 
 def servable_catalogs(conn: sqlite3.Connection) -> list[ServedCatalog]:
     """Enabled catalogs that have an active snapshot, in manifest order (PLAN.md section 9)."""
     rows = conn.execute("""
-        SELECT d.catalog_id, d.name FROM catalog_defs d
+        SELECT d.catalog_id, d.name, s.media_type FROM catalog_defs d
+        JOIN snapshots s ON s.catalog_id = d.catalog_id AND s.status = 'active'
         WHERE d.state = 'enabled'
-          AND EXISTS (SELECT 1 FROM snapshots s WHERE s.catalog_id = d.catalog_id AND s.status = 'active')
         ORDER BY d.position, d.catalog_id
         """).fetchall()
-    return [ServedCatalog(r["catalog_id"], r["name"]) for r in rows]
+    return [ServedCatalog(r["catalog_id"], r["name"], r["media_type"]) for r in rows]
 
 
 def catalog_state(conn: sqlite3.Connection, catalog_id: str) -> Optional[str]:
@@ -217,24 +232,35 @@ def catalog_state(conn: sqlite3.Connection, catalog_id: str) -> Optional[str]:
     return row["state"] if row else None
 
 
-def active_metas(conn: sqlite3.Connection, catalog_id: str) -> Optional[list[dict[str, Any]]]:
-    """The active snapshot's metas, or None when the catalog has no active snapshot."""
+def active_metas(
+    conn: sqlite3.Connection, catalog_id: str, media_type: Optional[str] = None
+) -> Optional[list[dict[str, Any]]]:
+    """
+    The active snapshot's metas, or None when the catalog has no active snapshot (or, with
+    ``media_type``, when the active snapshot is of another type).
+    """
     row = conn.execute(
-        "SELECT metas_json FROM snapshots WHERE catalog_id = ? AND status = 'active'", (catalog_id,)
+        "SELECT metas_json, media_type FROM snapshots WHERE catalog_id = ? AND status = 'active'", (catalog_id,)
     ).fetchone()
-    if row is None:
+    if row is None or (media_type is not None and row["media_type"] != media_type):
         return None
     return json.loads(row["metas_json"])
 
 
-def window_activation_ids(conn: sqlite3.Connection, catalog_id: str, runs: int) -> list[int]:
-    """The last ``runs`` non-revoked activations, newest first: the history window."""
+def window_activation_ids(
+    conn: sqlite3.Connection, catalog_id: str, runs: int, media_type: Optional[str] = None
+) -> list[int]:
+    """
+    The last ``runs`` non-revoked activations, newest first: the history window. With
+    ``media_type``, only activations of lists of that type (a catalog switched from movies to
+    shows starts a fresh window: TMDB movie and TV ids are separate number spaces).
+    """
     rows = conn.execute(
         """
-        SELECT id FROM activations
-        WHERE catalog_id = ? AND revoked_at IS NULL
-        ORDER BY id DESC LIMIT ?
+        SELECT a.id FROM activations a JOIN snapshots s ON s.id = a.snapshot_id
+        WHERE a.catalog_id = ? AND a.revoked_at IS NULL AND (? IS NULL OR s.media_type = ?)
+        ORDER BY a.id DESC LIMIT ?
         """,
-        (catalog_id, runs),
+        (catalog_id, media_type, media_type, runs),
     ).fetchall()
     return [r["id"] for r in rows]

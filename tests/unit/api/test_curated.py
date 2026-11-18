@@ -250,3 +250,52 @@ def test_manifest_artwork_files_are_served(client):
         assert r.status_code == 200 and r.headers["content-type"] == "image/png", name
         width, height = int.from_bytes(r.content[16:20], "big"), int.from_bytes(r.content[20:24], "big")
         assert (width, height) == size, name
+
+
+# --- series (PLAN.md section 29) ---------------------------------------------------------
+
+
+def shows(start, count):
+    return [
+        SnapshotItem(f"tt{3000000 + n}", f"Show {n}", 2000 + n % 20, 900 + n, media_type="series")
+        for n in range(start, start + count)
+    ]
+
+
+def test_manifest_lists_series_catalogs_with_their_type(client):
+    publish("daily_example", films(0, 3))
+    publish("show_list", shows(0, 3), name="Show List", definition={"type": "series", "v": 1})
+    manifest = client.get(f"/c/{TOKEN}/manifest.json").json()
+    assert manifest["types"] == ["movie", "series"]
+    assert {(c["id"], c["type"]) for c in manifest["catalogs"]} == {("daily_example", "movie"), ("show_list", "series")}
+
+
+def test_only_series_means_only_the_series_type(client):
+    publish("show_list", shows(0, 3), definition={"type": "series"})
+    assert client.get(f"/c/{TOKEN}/manifest.json").json()["types"] == ["series"]
+
+
+def test_series_catalog_is_read_like_aiometadata_does(client):
+    publish("show_list", shows(0, 40), definition={"type": "series"})
+    manifest_url = f"/c/{TOKEN}/manifest.json"
+    catalog = client.get(manifest_url).json()["catalogs"][0]
+    items, urls = aiometadata_read(client, manifest_url, catalog)
+    assert urls[0] == f"/c/{TOKEN}/catalog/series/show_list.json"
+    assert len(items) == 40 and {m["type"] for m in items} == {"series"}
+    assert client.get(f"/c/{TOKEN}/catalog/series/show_list/skip=40.json").json() == {"metas": []}
+
+
+def test_wrong_or_unknown_type_is_a_404(client):
+    publish("show_list", shows(0, 3), definition={"type": "series"})
+    publish("daily_example", films(0, 3))
+    assert client.get(f"/c/{TOKEN}/catalog/movie/show_list.json").status_code == 404
+    assert client.get(f"/c/{TOKEN}/catalog/series/daily_example.json").status_code == 404
+    assert client.get(f"/c/{TOKEN}/catalog/channel/daily_example.json").status_code == 404
+
+
+def test_switched_catalog_keeps_serving_its_last_list_as_its_old_type(client):
+    publish("daily_example", films(0, 3))
+    publish("daily_example", [], definition={"type": "series"})  # switched; no show list yet
+    manifest = client.get(f"/c/{TOKEN}/manifest.json").json()
+    assert manifest["catalogs"][0]["type"] == "movie"
+    assert len(client.get(f"/c/{TOKEN}/catalog/movie/daily_example.json").json()["metas"]) == 3

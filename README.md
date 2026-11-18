@@ -11,15 +11,15 @@
 
 ---
 
-No filters to fiddle with and no lists to maintain: just describe the movies you want,
+No filters to fiddle with and no lists to maintain: just describe the movies or shows you want,
 "cozy rainy-day mysteries", "80s practical-effects sci-fi", "feel-good comedies under two
 hours", and AI Catalogs builds the catalog for you. It asks an AI model for ideas, checks every
-movie against TMDB, drops anything that breaks your rules, and refreshes it on your schedule with
+title against TMDB, drops anything that breaks your rules, and refreshes it on your schedule with
 new picks, so nothing you saw recently comes back too soon.
 
 Catalogs are served through [AIOMetadata](https://github.com/cedya77/aiometadata), so they show
-up in Stremio and the other apps AIOMetadata works with, like any other catalog. Movies today;
-TV shows are planned.
+up in Stremio and the other apps AIOMetadata works with, like any other catalog. Each
+catalog is either movies or TV shows: one toggle at the top of the catalog.
 
 ## What makes it different
 
@@ -27,14 +27,15 @@ Most catalog addons give you filters: a genre, a year range, a rating, a popular
 else made. AI Catalogs gives you a **full prompt**. Whatever you can put into words becomes a
 catalog:
 
-- **Anything you can describe.** Moods ("comfort movies for a sick day"), themes ("heists where
-  the plan goes wrong"), styles ("practical effects, no CGI-heavy blockbusters"), eras, places,
-  vibes, comparisons ("like *Movie A* but darker"), or several of these at once. No tags or genre
-  lists can say that.
-- **Real movies only, and your rules always hold.** The AI only suggests; every movie is checked
-  against TMDB, and your minimum rating, years, length, language and never-include list are
-  enforced by the app itself, not just asked of the AI. Made-up titles and rule-breakers never
-  make it in.
+- **Anything you can describe.** Moods ("comfort movies for a sick day", "a slow-burn mystery
+  series to binge"), themes ("heists where the plan goes wrong"), styles ("practical effects, no
+  CGI-heavy blockbusters"), eras, places, vibes, comparisons ("like *Title A* but darker"), or
+  several of these at once. No tags or genre lists can say that.
+- **Movies or shows.** Each catalog is one or the other, picked with one toggle.
+- **Real titles only, and your rules always hold.** The AI only suggests; every movie or show is
+  checked against TMDB, and your minimum rating, years, language, length (movies) and
+  never-include list are enforced by the app itself, not just asked of the AI. Made-up titles
+  and rule-breakers never make it in.
 - **A new catalog every time.** Each run asks again, skips what it showed you recently, and can
   lean a different way per weekday, so the catalog keeps surprising you instead of going stale.
 - **Your AI, your key.** Use OpenRouter or a Gemini key, pick any model, and cap how many requests
@@ -49,21 +50,21 @@ you paste into AIOMetadata.
 
 ## Describe what you want
 
-Describe the movies you want in plain words, pick how many and how often it runs. No special
+Describe the movies or shows you want in plain words, pick how many and how often it runs. No special
 syntax needed.
 
 ![Writing the catalog description](docs/images/prompt.png)
 
 ## Set your rules
 
-Minimum rating, years, length, language and movies to never include, picked from suggestions as
-you type. Movies that break a rule never make the catalog. Fine-tuning lives under Advanced.
+Minimum rating, years, length, language and titles to never include, picked from suggestions as
+you type. Anything that breaks a rule never makes the catalog. Fine-tuning lives under Advanced.
 
 ![Sliders for rating, year and runtime](docs/images/limits.png)
 
 ## Try it before it goes live
 
-A test run shows the movies the AI would pick, how many passed your rules and why the rest were
+A test run shows the titles the AI would pick, how many passed your rules and why the rest were
 turned away, without changing what your apps show. Happy with it? Run it for real. Didn't like a
 new version? Bring back an earlier one in two clicks.
 
@@ -72,7 +73,7 @@ new version? Bring back an earlier one in two clicks.
 ## Good to know
 
 - **Refreshes on its own.** Daily, weekly, or whenever you like.
-- **No repeats.** Movies from recent versions are held back so every refresh feels new.
+- **No repeats.** Titles from recent versions are held back so every refresh feels new.
 - **Skips what you've watched**, if you connect MDBList.
 - **Stays within budget.** You set how many AI requests it may make each day.
 - **Your catalogs stay private.** Your addon link has a secret part, set during setup, so only people you share it with can see them.
