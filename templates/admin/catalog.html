@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}{{ catalog.name if catalog else "New catalog" }} · AI Catalogs{% endblock %}
 
 {# Text that reads "movies" or "shows" with the Movies / Shows toggle (admin.js swaps it). #}
@@ -69,17 +70,17 @@
   <div class="row-start">
     <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/dry-run" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" class="secondary" {{ "disabled" if busy else "" }} title="Ask the AI with the saved settings and show the results, without publishing">⚗ Test run</button>
+      <button type="submit" class="secondary" {{ "disabled" if busy else "" }} title="Ask the AI with the saved settings and show the results, without publishing">{{ icon("flask") }}Test run</button>
     </form>
     <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/refresh" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" {{ "disabled" if busy else "" }} title="Ask the AI now and publish a new version">▶ Run now</button>
+      <button type="submit" {{ "disabled" if busy else "" }} title="Ask the AI now and publish a new version">{{ icon("play") }}Run now</button>
     </form>
   </div>
   {% endif %}
 </div>
 {% if catalog and editable %}
-<p class="muted small">⚗ <b>Test run</b> asks the AI with the saved settings and shows the results under Activity, without changing what your apps see. ▶ <b>Run now</b> publishes a new version.</p>
+<p class="muted small"><b>Test run</b> asks the AI with the saved settings and shows its picks under Activity, without changing what your apps see. <b>Run now</b> publishes a new version.</p>
 {% endif %}
 
 {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
@@ -108,8 +109,8 @@
 
 {% if checked %}
 <section class="card preview-card" id="preview">
-  <h2>👁 Preview: looks good</h2>
-  <p class="sub">Not saved yet. With these settings, this is exactly what the AI will be asked (shown for a sample day). No AI call was made.</p>
+  <h2>Preview</h2>
+  <p class="sub">Not saved yet. This is exactly what the AI will be asked with these settings, shown for a sample day. Previews are free: no AI call was made.</p>
   {% if checked.unresolved %}<p class="warning">Not found on TMDB: {{ checked.unresolved | join(", ") }}</p>{% endif %}
   <pre class="preview">{{ checked.prompt_preview }}</pre>
 </section>
@@ -173,7 +174,7 @@
           <input id="sched-tz" name="sched_tz" value="{{ values.sched_tz }}" placeholder="UTC" data-autotz>
         </div>
       </div>
-      <span class="help">How often the AI makes a new version of this catalog. Manually: only when you press ▶ Run now. Tip: start on Manually, use Test run until you like the results, then pick a schedule.</span>
+      <span class="help">How often the AI makes a new version of this catalog. Manually: only when you press Run now. Tip: start on Manually, use Test run until you like the results, then pick a schedule.</span>
     </div>
   </section>
 
@@ -197,9 +198,8 @@
   </details>
 
   <div class="savebar">
-    <span class="savebar-hint">👁 Preview shows what the AI will be asked. It's free: no AI call.</span>
     <a class="button ghost" href="{{ prefix }}/{{ 'catalogs/' ~ catalog.catalog_id if catalog else '' }}" data-confirm-leave>Cancel</a>
-    <button type="submit" name="action" value="validate" class="secondary">👁 Preview</button>
+    <button type="submit" name="action" value="validate" class="secondary" title="See exactly what the AI will be asked. Free: no AI call.">{{ icon("eye") }}Preview</button>
     <button type="submit" name="action" value="save">{{ "Save changes" if catalog else "Create catalog" }}</button>
   </div>
   </fieldset>
@@ -213,16 +213,16 @@
     <div class="row">
       <div>
         <h2>Runs</h2>
-        <p class="muted small">▶ Run now publishes a new version. ⚗ Test run shows what a run would pick, without changing what your apps see.</p>
+        <p class="muted small">Run now publishes a new version. Test run shows what a run would pick, without changing what your apps see.</p>
       </div>
       <div class="row-start">
         <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/dry-run" class="inline">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button type="submit" class="secondary" {{ "disabled" if catalog.state != "enabled" or st.open_job else "" }}>⚗ Test run</button>
+          <button type="submit" class="secondary" {{ "disabled" if catalog.state != "enabled" or st.open_job else "" }}>{{ icon("flask") }}Test run</button>
         </form>
         <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/refresh" class="inline">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button type="submit" {{ "disabled" if catalog.state != "enabled" or st.open_job else "" }}>▶ Run now</button>
+          <button type="submit" {{ "disabled" if catalog.state != "enabled" or st.open_job else "" }}>{{ icon("play") }}Run now</button>
         </form>
       </div>
     </div>
@@ -264,7 +264,7 @@
       </div>
       {% endfor %}
     </div>
-    {% else %}<p class="muted">Nothing has run yet. Try ⚗ Test run, or ▶ Run now to fill the catalog.</p>{% endif %}
+    {% else %}<p class="muted">Nothing has run yet. Try a test run, or Run now to fill the catalog.</p>{% endif %}
   </section>
 
   <section class="card">

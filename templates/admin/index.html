@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block content %}
 <div class="stack">
 {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
@@ -54,19 +55,20 @@
     <div class="card-actions">
       <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/refresh" class="inline">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <button type="submit" class="small" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI now and publish a new version">▶ Run now</button>
+        <button type="submit" class="small" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI now and publish a new version">{{ icon("play") }}Run now</button>
       </form>
       <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/dry-run" class="inline">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <button type="submit" class="small secondary" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI and show the results without publishing">⚗ Test run</button>
+        <button type="submit" class="small secondary" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI and show the results without publishing">{{ icon("flask") }}Test run</button>
       </form>
-      <a class="button small ghost" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">Edit</a>
-      <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/state" class="inline push-right" data-confirm="Delete “{{ c.name }}”? It disappears from your apps.">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="base_rev" value="{{ c.config_rev }}">
-        <input type="hidden" name="back" value="index">
-        <button type="submit" name="state" value="removed" class="small ghost danger-text" title="Delete this catalog" aria-label="Delete {{ c.name }}">🗑</button>
-      </form>
+      <div class="card-tools">
+        <a class="icon-btn" href="{{ prefix }}/catalogs/{{ c.catalog_id }}" title="Edit" aria-label="Edit {{ c.name }}">{{ icon("edit") }}</a>
+        <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/state" class="inline" data-confirm="Delete “{{ c.name }}”? It disappears from your apps.">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="base_rev" value="{{ c.config_rev }}">
+          <button type="submit" name="state" value="removed" class="icon-btn danger-text" title="Delete" aria-label="Delete {{ c.name }}">{{ icon("trash") }}</button>
+        </form>
+      </div>
     </div>
   </div>
   {% endfor %}

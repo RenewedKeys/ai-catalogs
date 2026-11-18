@@ -1072,7 +1072,7 @@ def test_pages_show_the_logo_and_no_signed_in_label(client):
 def test_dashboard_cards_can_run_test_edit_and_delete(client):
     add_catalog()
     page = client.get("/configure/").text
-    assert "/configure/catalogs/alpha_list/refresh" in page and "▶ Run now" in page
+    assert "/configure/catalogs/alpha_list/refresh" in page and "Run now</button>" in page
     assert "/configure/catalogs/alpha_list/dry-run" in page and "Test run" in page
     assert 'value="removed"' in page and "data-confirm=" in page
     r = client.post(
@@ -1183,7 +1183,10 @@ def test_settings_page_offers_pickers_and_no_yaml_tab(client):
     ):
         assert re.search(rf'name="{name}"[^>]*data-widget="{widget}"', page, re.S), name
     assert "&#34;English&#34;" in page or '"English"' in page  # language names, not codes
-    assert "Cancel" in page and "👁 Preview" in page and "⚗ Test run" in page and "▶ Run now" in page
+    assert (
+        "Cancel" in page and "Preview</button>" in page and "Test run</button>" in page and "Run now</button>" in page
+    )
+    assert not any(e in page for e in ("👁", "⚗", "▶", "🗑"))  # line icons, no emoji
 
 
 def test_slider_ranges_are_sensible():
@@ -1191,7 +1194,9 @@ def test_slider_ranges_are_sensible():
     assert by_name["year_min"].minimum == 1900 and by_name["year_min"].maximum <= 2100
     assert by_name["min_runtime"].maximum == 240
     adv = {f.name: f for _, fs in editor.advanced_groups() for f in fs}
-    assert adv["history_window_runs"].maximum == 30 and not adv["max_prompt_chars"].slider
+    assert adv["history_window_runs"].maximum == 30
+    for name in ("history_prompt_limit", "watched_prompt_limit", "max_prompt_chars"):
+        assert name not in adv  # internal tuning: not on the page
 
 
 @pytest.mark.parametrize(
@@ -1287,3 +1292,12 @@ def test_dashboard_tags_each_catalog_with_its_type(client):
     add_catalog(cid="show_one", type="series")
     page = client.get("/configure/").text
     assert 'class="chip kind">Shows<' in page and 'class="chip kind">Movies<' in page
+
+
+def test_internal_prompt_knobs_are_hidden_but_kept(client):
+    rev = add_catalog(history_prompt_limit=40, max_prompt_chars=9000)
+    page = client.get("/configure/catalogs/alpha_list").text
+    assert 'name="history_prompt_limit"' not in page and 'name="max_prompt_chars"' not in page
+    vals = {k: v for k, v in values_for({"prompt": PROMPT}).items() if k not in editor.FORM_HIDDEN}
+    r = post_form(client, "/configure/catalogs/alpha_list/save", vals, base_rev=rev, action="save")
+    assert r.status_code == 303 and catalog_row("alpha_list")["config_rev"] == rev

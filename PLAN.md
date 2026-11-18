@@ -1084,6 +1084,10 @@ Owner feedback on the section 26 editor, all in one change:
 - **`GEMINI_API_KEY`**: with no `OPENAI_API_KEY`, it becomes the key and, unless set explicitly,
   `OPENAI_BASE_URL` becomes Google's OpenAI-compatible endpoint and `DEFAULT_MODEL` drops its
   `google/` prefix. Same code path otherwise; the model picker strips Google's `models/` prefix.
+- **Hidden tuning knobs** (follow-up): `history_prompt_limit`, `watched_prompt_limit` and
+  `max_prompt_chars` left the page too (`FORM_HIDDEN`); they are internal prompt-size tuning
+  whose defaults fit everyone, and a stored value is kept on save. Editor emoji were replaced by
+  inline SVG line icons.
 
 ## 29. TV shows (design, approved)
 
