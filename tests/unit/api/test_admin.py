@@ -1072,7 +1072,7 @@ def test_pages_show_the_logo_and_no_signed_in_label(client):
 def test_dashboard_cards_can_run_test_edit_and_delete(client):
     add_catalog()
     page = client.get("/configure/").text
-    assert "/configure/catalogs/alpha_list/refresh" in page and "▶ Run now" in page
+    assert "/configure/catalogs/alpha_list/refresh" in page and "Run now</button>" in page
     assert "/configure/catalogs/alpha_list/dry-run" in page and "Test run" in page
     assert 'value="removed"' in page and "data-confirm=" in page
     r = client.post(
@@ -1183,7 +1183,10 @@ def test_settings_page_offers_pickers_and_no_yaml_tab(client):
     ):
         assert re.search(rf'name="{name}"[^>]*data-widget="{widget}"', page, re.S), name
     assert "&#34;English&#34;" in page or '"English"' in page  # language names, not codes
-    assert "Cancel" in page and "👁 Preview" in page and "⚗ Test run" in page and "▶ Run now" in page
+    assert (
+        "Cancel" in page and "Preview</button>" in page and "Test run</button>" in page and "Run now</button>" in page
+    )
+    assert not any(e in page for e in ("👁", "⚗", "▶", "🗑"))  # line icons, no emoji
 
 
 def test_slider_ranges_are_sensible():
