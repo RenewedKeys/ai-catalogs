@@ -5,16 +5,21 @@
 <h1 align="center">AI Catalogs</h1>
 
 <p align="center">
-  Fresh, hand-picked movie catalogs for Stremio, chosen by AI and refreshed on your schedule.
+  <b>Describe it. Get a catalog.</b><br>
+  Write what you're in the mood for in plain words, and AI keeps a fresh catalog of it in your apps.
 </p>
 
 ---
 
-Describe the kind of movies you want, and AI Catalogs builds the catalog for you. It asks an AI
-model for ideas, checks every film against TMDB, drops anything that doesn't fit your rules,
-and serves it to [AIOMetadata](https://github.com/cedya77/aiometadata), which shows it
-in Stremio as a normal catalog. Each refresh brings new picks, and nothing you saw recently
-comes back too soon.
+No filters to fiddle with and no lists to maintain: just describe the movies you want,
+"cozy rainy-day mysteries", "80s practical-effects sci-fi", "feel-good comedies under two
+hours", and AI Catalogs builds the catalog for you. It asks an AI model for ideas, checks every
+movie against TMDB, drops anything that breaks your rules, and refreshes it on your schedule with
+new picks, so nothing you saw recently comes back too soon.
+
+Catalogs are served through [AIOMetadata](https://github.com/cedya77/aiometadata), so they show
+up in Stremio and the other apps AIOMetadata works with, like any other catalog. Movies today;
+TV shows are planned.
 
 ## All your catalogs in one place
 
