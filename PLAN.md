@@ -1068,3 +1068,19 @@ Owner feedback on the section 26 editor, all in one change:
 - **Fewer calls per run**: `pipeline.batch_sizes` folds a remainder under a third of a batch into
   the other calls and splits evenly (64 -> one call instead of 60 + 4; 160 -> 54/53/53). Calls
   stay under 80 movies, well within the default `max_tokens`.
+
+## 28. Releases, published image, Gemini key
+
+- **Releases**: a release is a `vX.Y.Z` tag on `main` (`.github/workflows/release.yml`). The
+  workflow checks the tag equals `app.__version__`, builds `linux/amd64` + `linux/arm64`, pushes
+  `ghcr.io/renewedkeys/ai-catalogs:X.Y.Z`, `:X.Y`, `:X` and `:latest` (only for the highest
+  version, so rebuilding an old tag never moves `latest` back), then creates the GitHub release
+  with notes generated from the merged pull requests. `workflow_dispatch` rebuilds an existing
+  tag. Simpler than release-please (no conventional-commit titles, no bot PRs). First release:
+  1.0.0. The page's top bar shows the running version.
+- **Self-hosting docs**: the README has an image-based compose file in AIOMetadata's style, with
+  the Traefik/Authelia labels, `expose` and profiles commented out for the Viren070 template; the
+  repository's own `docker-compose.yml` stays the build-from-source file (CI's smoke test).
+- **`GEMINI_API_KEY`**: with no `OPENAI_API_KEY`, it becomes the key and, unless set explicitly,
+  `OPENAI_BASE_URL` becomes Google's OpenAI-compatible endpoint and `DEFAULT_MODEL` drops its
+  `google/` prefix. Same code path otherwise; the model picker strips Google's `models/` prefix.

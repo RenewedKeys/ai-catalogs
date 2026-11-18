@@ -1218,3 +1218,9 @@ def test_notices_are_short_and_plain(client):
     add_catalog()
     r = client.get("/configure/catalogs/alpha_list?msg=saved").text
     assert "Saved." in r and "definition" not in r.split("Saved.")[1][:40]
+
+
+def test_top_bar_shows_the_version(client):
+    from app import __version__
+
+    assert f">v{__version__}</a>" in client.get("/configure/").text

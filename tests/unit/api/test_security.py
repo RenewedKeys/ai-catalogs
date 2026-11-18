@@ -17,6 +17,7 @@ from app.core.config import settings
 
 SENTINELS = {
     "OPENAI_API_KEY": "sk-SENTINEL-openai-0123456789",
+    "GEMINI_API_KEY": "AIzaSENTINEL-gemini-0123456789",
     "TMDB_READ_ACCESS_TOKEN": "SENTINEL-tmdb-0123456789",
     "MDBLIST_API_KEY": "SENTINEL-mdblist-0123456789",
     "ADDON_ACCESS_TOKEN": "SENTINELaddontoken0123456789",

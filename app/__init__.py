@@ -2,4 +2,4 @@
 AI Catalogs - curated, daily-rotating AI catalogs for Stremio.
 """
 
-__version__ = "0.14.0"
+__version__ = "1.0.0"

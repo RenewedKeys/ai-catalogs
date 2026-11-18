@@ -174,6 +174,12 @@ against a real AIOMetadata.
 
 ## Run
 
+The ready-built image is `ghcr.io/renewedkeys/ai-catalogs` (amd64 and arm64), tagged with every
+release (`1.2.3`, `1.2`, `1`) and `latest`. The [README](../README.md#self-hosting-docker-compose)
+has a complete compose file, with the Traefik/Authelia lines ready to uncomment.
+
+To build from source instead, use this repository's `docker-compose.yml`:
+
 ```bash
 cp .env.example .env
 ```
@@ -186,6 +192,18 @@ docker compose up -d --build
 
 The web service listens on port 8000 (`PORT` in `.env` changes the published port).
 
+### Releases
+
+A release is a version tag on `main`. Bump `__version__` in `app/__init__.py` in a pull request,
+merge it, then:
+
+```bash
+git tag v1.2.3 && git push origin v1.2.3
+```
+
+The Release workflow checks the tag matches `__version__`, builds and pushes the image, and
+publishes the GitHub release with notes from the merged pull requests.
+
 ## Configuration
 
 All settings are environment variables; [.env.example](../.env.example) lists them. API keys are
@@ -195,6 +213,7 @@ a failure and its HTTP status, not the provider's message, which can quote a key
 | Variable | Purpose |
 |---|---|
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL` | OpenRouter (default) or another OpenAI-compatible API |
+| `GEMINI_API_KEY` | Google's Gemini API instead (used when `OPENAI_API_KEY` is empty; model ids then have no `google/` prefix) |
 | `TMDB_API_KEY` | TMDB v4 read access token |
 | `MDBLIST_API_KEY` | Optional. MDBList API key, used only by catalogs with `exclude_watched: true` (skip films you have watched) |
 | `PUBLIC_BASE_URL` | Externally reachable URL of this server |

@@ -9,6 +9,8 @@ from app import __version__
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+
 
 class Settings(BaseSettings):
     """
@@ -65,8 +67,12 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = Field(default="INFO")
 
-    # API settings
+    # API settings. OpenRouter (or any OpenAI-compatible API) by default; GEMINI_API_KEY alone switches
+    # to Google's own OpenAI-compatible endpoint (see _gemini below).
     OPENAI_API_KEY: str | None = Field(default=None)
+    GEMINI_API_KEY: str | None = Field(
+        default=None, description="Google AI Studio key, used when OPENAI_API_KEY is unset"
+    )
     OPENAI_BASE_URL: str = Field(default="https://openrouter.ai/api/v1")
     DEFAULT_MODEL: str = Field(
         default="google/gemini-3.5-flash-lite",
@@ -81,6 +87,17 @@ class Settings(BaseSettings):
 
     # MDBList: the owner's watched history, for catalogs with `exclude_watched: true`
     MDBLIST_API_KEY: str | None = Field(default=None, description="MDBList API key (mdblist.com/preferences)")
+
+    @model_validator(mode="after")
+    def _gemini(self):
+        """GEMINI_API_KEY without OPENAI_API_KEY: talk to Google directly, same code path."""
+        if self.GEMINI_API_KEY and not self.OPENAI_API_KEY:
+            self.OPENAI_API_KEY = self.GEMINI_API_KEY
+            if "OPENAI_BASE_URL" not in self.model_fields_set:
+                self.OPENAI_BASE_URL = GEMINI_BASE_URL
+            if "DEFAULT_MODEL" not in self.model_fields_set and self.DEFAULT_MODEL.startswith("google/"):
+                self.DEFAULT_MODEL = self.DEFAULT_MODEL.removeprefix("google/")  # Google's own model ids
+        return self
 
     @model_validator(mode="after")
     def _normalise(self):

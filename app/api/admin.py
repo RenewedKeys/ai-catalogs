@@ -481,7 +481,8 @@ async def _model_ids() -> list[str]:
         r = await http.get(settings.OPENAI_BASE_URL.rstrip("/") + "/models", headers=headers)
         r.raise_for_status()
         data = r.json().get("data") or []
-    ids = sorted({m["id"] for m in data if isinstance(m, dict) and isinstance(m.get("id"), str)})
+    raw = [m["id"] for m in data if isinstance(m, dict) and isinstance(m.get("id"), str)]
+    ids = sorted({i.removeprefix("models/") for i in raw})  # Google lists "models/<id>"
     _MODELS.update(at=time.time(), ids=ids)
     return ids
 
@@ -612,6 +613,9 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
     admin.state.tmdb_client_factory = tmdb_client_factory or TMDBClient
     env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=select_autoescape(default=True))
     env.filters["when"] = when
+    from app import __version__
+
+    env.globals["version"] = __version__
     env.globals.update(run_kind=run_kind, run_status=run_status, reject_label=reject_label, run_details=run_details)
 
     def page(request: Request, template: str, status_code: int = 200, **context) -> HTMLResponse:
