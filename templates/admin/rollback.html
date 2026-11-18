@@ -3,10 +3,10 @@
 {% block content %}
 <a class="back" href="{{ prefix }}/catalogs/{{ catalog.catalog_id }}">&larr; {{ catalog.name }}</a>
 <div class="card">
-  <h2>Bring back an earlier list?</h2>
-  <p class="sub">List {{ snap.id }}{% if snap.created_at %} (published {{ snap.created_at | when }}, {{ snap["items"] }} films){% endif %} becomes the list your viewers see again.
-  Lists published after it are withdrawn: their films can be picked again, and you can't roll back to them later.
-  A refresh running right now won't publish.</p>
+  <h2>Bring back an earlier version?</h2>
+  <p class="sub">Version {{ snap.id }}{% if snap.created_at %} (published {{ snap.created_at | when }}, {{ snap["items"] }} movies){% endif %} is shown in your apps again.
+  Versions published after it are withdrawn: their movies can be picked again, and you can't bring them back later.
+  A run in progress won't publish.</p>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   <form method="post" action="{{ prefix }}/catalogs/{{ catalog.catalog_id }}/rollback/{{ snap.id }}" class="row-start">
     <input type="hidden" name="csrf" value="{{ csrf }}">

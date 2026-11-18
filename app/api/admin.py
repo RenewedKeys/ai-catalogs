@@ -37,6 +37,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -89,17 +90,17 @@ SECURITY_HEADERS = {
 
 # Fixed notices, selected by a key in the redirect URL (never free text from the URL).
 NOTICES = {
-    "saved": "Saved. The new definition is live.",
+    "saved": "Saved.",
     "created": "Catalog created.",
-    "moved": "The catalog is now managed in the editor. Delete or rename its file in catalogs.d.",
-    "enabled": "Catalog enabled.",
-    "disabled": "Catalog disabled.",
-    "dry_run_queued": "Test run started. Results appear under Activity when it finishes.",
-    "refresh_queued": "Refresh started. The new list goes live when it finishes.",
-    "already_open": "The catalog already has an open job; wait for it to finish.",
-    "daily_limit": "max_runs_per_day is reached for this catalog.",
-    "not_enabled": "Only an enabled catalog can run.",
-    "rolled_back": "Rolled back. That list is being served again.",
+    "moved": "You can edit this catalog here now.",
+    "enabled": "Catalog is visible.",
+    "disabled": "Catalog is hidden.",
+    "dry_run_queued": "Test run started. The results appear below in a moment.",
+    "refresh_queued": "Running. The new version appears below in a moment.",
+    "already_open": "This catalog is already running. Wait for it to finish.",
+    "daily_limit": "This catalog has reached its runs for today. Try again tomorrow.",
+    "not_enabled": "This catalog is hidden. Make it visible to run it.",
+    "rolled_back": "Done. That earlier version is showing again.",
     "deleted": "Catalog deleted.",
 }
 
@@ -127,6 +128,97 @@ REJECT_LABELS = {
     "imdb_id_missing": "no IMDb id",
     "blacklisted": "on your never-include list",
 }
+
+
+STAGE_LABELS = {
+    "model_calls_ok": "AI requests",
+    "topup_rounds": "extra rounds to fill gaps",
+    "generated": "suggestions from the AI",
+    "dropped_rows": "unreadable suggestions",
+    "unique": "different movies",
+    "duplicate_id": "duplicates",
+    "eligible": "passed your rules",
+    "held_for_history": "skipped because shown recently",
+    "selected": "picked",
+    "unmet_hard": "decade minimums missed",
+    "unmet_soft": "theme minimums missed",
+    "stopped_by_budget": "stopped by the daily AI limit",
+    "watched_known": "watched movies known",
+}
+
+
+STAGE_LABELS_ONE = {
+    "model_calls_ok": "AI request",
+    "topup_rounds": "extra round to fill gaps",
+    "dropped_rows": "unreadable suggestion",
+    "unique": "different movie",
+    "duplicate_id": "duplicate",
+    "unmet_hard": "decade minimum missed",
+    "unmet_soft": "theme minimum missed",
+    "watched_known": "watched movie known",
+}
+
+
+def run_details(run: dict[str, Any]) -> list[str]:
+    """The run's counts as short plain phrases, e.g. '2 AI requests'."""
+    out = []
+    for key, n in (run.get("stage_counts") or {}).items():
+        if key in ("generated", "eligible", "selected"):
+            continue  # shown as the big numbers
+        if (
+            key in ("dropped_rows", "duplicate_id", "topup_rounds", "held_for_history", "unmet_hard", "unmet_soft")
+            and not n
+        ):
+            continue
+        label = STAGE_LABELS_ONE.get(key) if n == 1 and key in STAGE_LABELS_ONE else None
+        label = label or STAGE_LABELS.get(key, key.replace("_", " "))
+        out.append("stopped by the daily AI limit" if key == "stopped_by_budget" else f"{n} {label}")
+    if run.get("tokens_in") or run.get("tokens_out"):
+        out.append(f"{run.get('tokens_in') or 0:,} tokens sent, {run.get('tokens_out') or 0:,} received")
+    return out
+
+
+_FRIENDLY = [
+    (re.compile(r"Input should be a valid integer.*"), "enter a whole number"),
+    (re.compile(r"Input should be a valid number.*"), "enter a number"),
+    (re.compile(r"Input should be greater than or equal to (\S+)"), r"must be at least \1"),
+    (re.compile(r"Input should be greater than (\S+)"), r"must be more than \1"),
+    (re.compile(r"Input should be less than or equal to (\S+)"), r"must be at most \1"),
+    (re.compile(r"Input should be less than (\S+)"), r"must be less than \1"),
+    (re.compile(r"String should have at least 1 character.*"), "can't be empty"),
+    (re.compile(r"Field required.*"), "is required"),
+    (re.compile(r"invalid YAML.*"), "couldn't read this value"),
+    (re.compile(r"not a number$"), "enter a number"),
+    (
+        re.compile(r"template uses unknown variable\(s\): (.*)"),
+        r"has {{ \1 }} in it, which isn't supported. Remove the curly braces.",
+    ),
+]
+
+
+def friendly_error(message: str) -> str:
+    """'year_min: Input should be ...' -> 'Released from: enter a whole number'; field names anywhere
+    in the message become their on-page labels."""
+    message = re.sub(r"^Value error, ", "", message.strip())
+    message = message.replace(
+        "schedule.cron must have five fields: minute hour day-of-month month day-of-week",
+        "Refresh: a custom schedule needs five parts (minute hour day month weekday)",
+    )
+    field, sep, rest = message.partition(": ")
+    if sep and re.fullmatch(r"[a-z_]+(\.[a-z0-9_]+)*", field) and field.split(".")[0] in editor.LABELS:
+        for pattern, replacement in _FRIENDLY:
+            if pattern.match(rest):
+                rest = pattern.sub(replacement, rest, count=1)
+                break
+        message = f"{editor.label_of(field.split('.')[0])}: {rest}"
+    names = sorted(editor.LABELS, key=len, reverse=True)
+    message = re.sub(
+        r"\b(" + "|".join(map(re.escape, names)) + r")\b(?!\s*:)",
+        lambda m: f"“{editor.label_of(m.group(1))}”",
+        message,
+    )
+    message = message.replace("publish_partial", "“Publish what was found”").replace(" films", " movies")
+    return message
 
 
 def when(value: Any) -> str:
@@ -351,9 +443,75 @@ def _catalogs() -> list[dict[str, Any]]:
     now = db.now_ms()
     with db.session() as conn:
         rows = conn.execute(
+            "SELECT catalog_id, config_rev FROM catalog_defs WHERE state != 'removed' ORDER BY position, catalog_id"
+        ).fetchall()
+        return [{**catalog_status(conn, r["catalog_id"], now), "config_rev": r["config_rev"]} for r in rows]
+
+
+def _reorder(ids: list[str]) -> int:
+    """The dashboard's drag order: positions 0..n-1 in the given order. Definitions are untouched."""
+    with db.session() as conn, db.transaction(conn):
+        live = {r[0] for r in conn.execute("SELECT catalog_id FROM catalog_defs WHERE state != 'removed'")}
+        ordered = [i for i in dict.fromkeys(ids) if i in live]
+        rest = conn.execute(
             "SELECT catalog_id FROM catalog_defs WHERE state != 'removed' ORDER BY position, catalog_id"
         ).fetchall()
-        return [catalog_status(conn, r["catalog_id"], now) for r in rows]
+        ordered += [r[0] for r in rest if r[0] not in ordered]
+        for pos, cid in enumerate(ordered):
+            conn.execute("UPDATE catalog_defs SET position = ? WHERE catalog_id = ?", (pos, cid))
+    return len(ordered)
+
+
+# ------------------------------------------------------------------ suggestions (pickers)
+
+SUGGEST_KINDS = {"movie", "collection", "company", "keyword", "model"}
+MAX_SUGGESTIONS = 12
+_MODELS: dict[str, Any] = {"at": 0.0, "ids": []}
+MODELS_TTL_S = 3600
+
+
+async def _model_ids() -> list[str]:
+    """Model ids the configured provider lists (OpenAI-compatible GET /models), cached an hour."""
+    if _MODELS["ids"] and time.time() - _MODELS["at"] < MODELS_TTL_S:
+        return _MODELS["ids"]
+    import httpx
+
+    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"} if settings.OPENAI_API_KEY else {}
+    async with httpx.AsyncClient(timeout=15) as http:
+        r = await http.get(settings.OPENAI_BASE_URL.rstrip("/") + "/models", headers=headers)
+        r.raise_for_status()
+        data = r.json().get("data") or []
+    ids = sorted({m["id"] for m in data if isinstance(m, dict) and isinstance(m.get("id"), str)})
+    _MODELS.update(at=time.time(), ids=ids)
+    return ids
+
+
+async def suggestions(kind: str, query: str, tmdb_client_factory: Callable[[], TMDBClient]) -> list[dict[str, str]]:
+    query = query.strip()[:100]
+    if kind not in SUGGEST_KINDS or len(query) < 2:
+        return []
+    if kind == "model":
+        words = query.lower().split()
+        ids = await _model_ids()
+        return [{"label": m, "value": m} for m in ids if all(w in m.lower() for w in words)][:MAX_SUGGESTIONS]
+    client = tmdb_client_factory()
+    try:
+        if kind == "movie":
+            params = {"query": query, "include_adult": "false", "language": "en-US", "page": "1"}
+            results = (await client.get("/search/movie", params)).get("results") or []
+            out = []
+            for r in results:
+                title, year = (r.get("title") or "").strip(), (r.get("release_date") or "")[:4]
+                if title:
+                    text = f"{title} ({year})" if year.isdigit() else title
+                    out.append({"label": text, "value": text, "votes": r.get("vote_count") or 0})
+            out.sort(key=lambda o: -o["votes"])
+            return [{"label": o["label"], "value": o["value"]} for o in out][:MAX_SUGGESTIONS]
+        results = (await client.get(f"/search/{kind}", {"query": query, "page": "1"})).get("results") or []
+        names = [(r.get("name") or "").strip() for r in results]
+        return [{"label": n, "value": n} for n in dict.fromkeys(n for n in names if n)][:MAX_SUGGESTIONS]
+    finally:
+        await client.aclose()
 
 
 def _load(catalog_id: str) -> Optional[dict[str, Any]]:
@@ -368,10 +526,18 @@ def _load(catalog_id: str) -> Optional[dict[str, Any]]:
         out = dict(row)
         out["definition"] = json.loads(row["definition_json"])
         out["status"] = catalog_status(conn, catalog_id, db.now_ms())
+        run_ids = [r["id"] for r in out["status"]["recent_runs"]]
+        previews = {}
+        if run_ids:
+            marks = ",".join("?" * len(run_ids))
+            for r in conn.execute(f"SELECT id, preview_json FROM runs WHERE id IN ({marks})", run_ids):
+                previews[r["id"]] = _picks(r["preview_json"])
+        for run in out["status"]["recent_runs"]:
+            run["picks"] = previews.get(run["id"])
         snaps = conn.execute(
             """
             SELECT s.id, s.created_at, s.item_count, s.status, s.metas_json IS NOT NULL AS has_payload,
-                   a.id AS activation_id, a.revoked_at
+                   s.metas_json, a.id AS activation_id, a.revoked_at
             FROM snapshots s LEFT JOIN activations a ON a.snapshot_id = s.id
             WHERE s.catalog_id = ? ORDER BY s.id DESC LIMIT ?
             """,
@@ -385,6 +551,7 @@ def _load(catalog_id: str) -> Optional[dict[str, Any]]:
             "status": s["status"],
             "has_payload": bool(s["has_payload"]),
             "revoked": s["revoked_at"] is not None,
+            "movies": _snapshot_movies(s["metas_json"]),
             "eligible": s["status"] != "active"
             and bool(s["has_payload"])
             and s["activation_id"] is not None
@@ -393,6 +560,35 @@ def _load(catalog_id: str) -> Optional[dict[str, Any]]:
         for s in snaps
     ]
     return out
+
+
+def _picks(text: Optional[str]) -> Optional[list[dict[str, Any]]]:
+    """A test run's stored picks as {title, year, imdb_id}; None when it stored none."""
+    if not text:
+        return None
+    try:
+        rows = json.loads(text)
+    except ValueError:
+        return None
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if isinstance(r, list) and r and isinstance(r[0], str):
+            out.append({"title": r[0], "year": r[1] if len(r) > 1 else None, "imdb_id": r[2] if len(r) > 2 else None})
+    return out
+
+
+def _snapshot_movies(text: Optional[str]) -> Optional[list[dict[str, Any]]]:
+    if not text:
+        return None
+    try:
+        metas = json.loads(text)
+    except ValueError:
+        return None
+    return [
+        {"title": m.get("name") or "", "year": m.get("releaseInfo"), "imdb_id": m.get("id")}
+        for m in metas
+        if isinstance(m, dict)
+    ]
 
 
 def _file_exists(catalog_id: str) -> Optional[str]:
@@ -416,7 +612,7 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
     admin.state.tmdb_client_factory = tmdb_client_factory or TMDBClient
     env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=select_autoescape(default=True))
     env.filters["when"] = when
-    env.globals.update(run_kind=run_kind, run_status=run_status, reject_label=reject_label)
+    env.globals.update(run_kind=run_kind, run_status=run_status, reject_label=reject_label, run_details=run_details)
 
     def page(request: Request, template: str, status_code: int = 200, **context) -> HTMLResponse:
         sess = getattr(request.state, "session", None)
@@ -560,6 +756,12 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
             help_of=editor.help_of,
             weekdays=list(enumerate(editor.WEEKDAY_NAMES)),
             mdblist_ready=bool(settings.MDBLIST_API_KEY),
+            option_label=editor.option_label,
+            current_json={n: json.dumps(definition.get(n)) for n in editor.WIDGETS},
+            widgets=editor.WIDGETS,
+            languages=editor.LANGUAGES,
+            genres=editor.GENRES,
+            decade_options=[[d, f"{d}s"] for d in editor.DECADES],
             values=values if values is not None else editor.form_values(definition),
             yaml_text=yaml_text if yaml_text is not None else editor.definition_yaml(definition),
             mode=mode,
@@ -569,6 +771,24 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
             file_present=_file_exists(catalog["catalog_id"]) if catalog else None,
             editable=catalog is None or catalog["source"] == "editor",
         )
+
+    @admin.post("/order")
+    async def reorder(request: Request):
+        form = await verified_form(request, request.state.session["sid"])
+        ids = [i for i in (form.get("order") or "").split(",") if CATALOG_ID_RE.fullmatch(i)]
+        count = await run_in_threadpool(_reorder, ids)
+        return JSONResponse({"ok": True, "count": count})
+
+    @admin.get("/suggest")
+    async def suggest(request: Request, kind: str = "", q: str = ""):
+        try:
+            items = await suggestions(kind, q, request.app.state.tmdb_client_factory)
+        except Exception as e:  # suggestions are a convenience: never an error page
+            from app.core.logging import describe_error, logger
+
+            logger.warning("Suggestions for %s failed: %s", kind, describe_error(e))
+            items = []
+        return JSONResponse(items)
 
     @admin.get("/new")
     async def new_catalog(request: Request):
@@ -620,7 +840,13 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
                 return redirect(f"/catalogs/{catalog_id}", "saved" if catalog else "created")
         except DefinitionError as e:
             return _editor_page(
-                request, catalog, catalog_id=catalog_id, mode=mode, errors=str(e).split("; "), status_code=422, **keep
+                request,
+                catalog,
+                catalog_id=catalog_id,
+                mode=mode,
+                errors=[friendly_error(m) for m in str(e).split("; ")],
+                status_code=422,
+                **keep,
             )
         if mode == "form":
             keep = dict(values=values)
@@ -630,7 +856,7 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
             catalog_id=catalog_id,
             mode=mode,
             checked=checked,
-            message="Valid. Not saved yet.",
+            message="Looks good. Not saved yet.",
             **keep,
         )
 

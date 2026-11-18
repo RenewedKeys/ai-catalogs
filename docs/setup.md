@@ -84,22 +84,28 @@ Stremio addon settings path, so proxy rules that protect addon settings pages co
 - **Addon URL**: the catalog list shows the manifest URL to paste into AIOMetadata, with a copy
   button (it contains `ADDON_ACCESS_TOKEN`; this is the only page that shows it).
 
-- **Create** a catalog with a name and a plain description; its id is made from the name. The
-  form asks for the essentials (list size, refresh schedule, rating, years, length, language,
-  films to never include); every other definition field is under **Advanced settings**, and the
-  **YAML** tab edits the whole definition as text. A description needs no template variables:
-  the list size, your rules and recently shown films are added to the AI request automatically.
-  **Check** runs the same checks as `python -m app.curation validate` and shows the request the
-  AI will get; **Save** makes the definition live at once.
+- **Create** a catalog with a name and a plain description of the movies you want; its id is
+  made from the name. The form asks for the essentials (catalog size, how often it runs, rating,
+  years, length, language, movies to never include); everything else is under **Advanced
+  settings**. Lists of values are pickers: languages and genres from a list, movies, franchises,
+  studios and keywords searched on TMDB as you type, AI models from your provider's model list.
+  A description needs no template variables: the size, rules, extra instructions, themes, example
+  movies and recently shown movies are all added to the AI request automatically.
+  **👁 Preview** shows the exact request the AI will get, without calling it; **Save** makes the
+  catalog live at once; **Cancel** drops unsaved changes.
+- **Dashboard**: drag ⠿ to set the order your apps show the catalogs in (it does not change
+  a catalog's settings or trigger a run; a file catalog takes its file's order again when its
+  file changes). Each card has **▶ Run now**, **⚗ Test run**, Edit and delete.
+- **▶ Run now** asks the AI and publishes a new version of the catalog. **⚗ Test run** (a dry
+  run) does everything except publishing and shows the movies it picked, how many were
+  suggested and passed your rules, and why the rest were turned away. To tune a new catalog,
+  leave it on *Manually*, test until you like the picks, then pick a schedule.
+- **Versions** (Activity tab): every run publishes a new version; **Bring back** an earlier one
+  (a rollback).
 - **Files vs editor.** A catalog from `catalogs.d` is read-only in the editor until you press
-  **Edit it here instead**. From then on the editor owns it: the file is ignored (delete or
-  rename it) and its removal does not remove the catalog. The move is one-way; to go back,
-  download the YAML, delete the catalog in the editor, then put the file back.
-- **Activity**: **Refresh now** publishes a new list; **Test run** (a dry run) runs everything
-  except publishing and shows how many films were suggested, passed your rules and were picked,
-  and why the rest were turned away. To tune a new catalog, leave Refresh on *Manually*, test
-  until the numbers look right, then pick a schedule.
-- **Bring back** an earlier published list (a rollback) from the Activity tab.
+  **Edit it here instead**. From then on the editor owns it and the file is ignored (delete or
+  rename it). The move is one-way. `GET /configure/catalogs/<id>/export.yaml` still downloads a
+  definition as YAML.
 
 Security (password mode): one password, a signed HttpOnly SameSite=Strict cookie (Secure when `PUBLIC_BASE_URL`
 is https) that lasts 12 hours, a CSRF token on every form, no CORS. Logging out clears the cookie

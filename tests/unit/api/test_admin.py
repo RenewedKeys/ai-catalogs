@@ -353,14 +353,17 @@ def test_create_catalog_from_the_form(client):
 
 def test_validation_errors_are_shown_and_nothing_is_stored(client):
     cases = [
-        ({"prompt": PROMPT, "min_vote_average": "11"}, "min_vote_average"),
-        ({"prompt": "Suggest {{ nonsense }} films"}, "unknown variable"),
-        ({"prompt": PROMPT, "year_min": "2000", "year_max": "1990"}, "year_min must not be greater"),
-        ({"prompt": PROMPT, "target_count": "abc"}, "target_count: not a number"),
-        ({"prompt": PROMPT, "schedule": "cron: '0 6 * *'"}, "schedule"),
-        ({"prompt": PROMPT, "decade_min": "[unclosed"}, "decade_min: invalid YAML"),
-        ({"prompt": PROMPT, "on_shortfall": "publish_partial"}, "min_accept"),
-        ({"prompt": ""}, "prompt"),
+        ({"prompt": PROMPT, "min_vote_average": "11"}, "Minimum rating: must be at most 10"),
+        ({"prompt": "Suggest {{ nonsense }} films"}, "Remove the curly braces"),
+        (
+            {"prompt": PROMPT, "year_min": "2000", "year_max": "1990"},
+            "“Released from” must not be greater than “Released until”",
+        ),
+        ({"prompt": PROMPT, "target_count": "abc"}, "Movies in the catalog: enter a number"),
+        ({"prompt": PROMPT, "schedule": "cron: '0 6 * *'"}, "Refresh: a custom schedule needs five parts"),
+        ({"prompt": PROMPT, "decade_min": "[unclosed"}, "Minimum movies per decade: couldn&#39;t read this value"),
+        ({"prompt": PROMPT, "on_shortfall": "publish_partial"}, "Smallest catalog worth publishing"),
+        ({"prompt": ""}, "What kind of movies do you want?"),
     ]
     for values, expected in cases:
         for action in ("validate", "save"):
@@ -383,7 +386,7 @@ def test_validate_shows_the_prompt_preview_and_saves_nothing(client):
     rev = add_catalog()
     vals = values_for({"prompt": PROMPT, "year_min": 1970})
     r = post_form(client, "/configure/catalogs/alpha_list/save", vals, base_rev=rev, action="validate")
-    assert r.status_code == 200 and "Valid. Not saved yet." in r.text
+    assert r.status_code == 200 and "Looks good. Not saved yet." in r.text
     assert "films for category alpha" in r.text and "1970" in r.text  # rendered prompt + constraints block
     assert catalog_row("alpha_list")["config_rev"] == rev
 
@@ -520,7 +523,7 @@ def test_tmdb_failure_saves_nothing(client, tmdb):
     tmdb.fail_with = 503
     vals = values_for({"prompt": PROMPT, "blacklist_titles": ["Film 3"]})
     r = post_form(client, "/configure/new", vals, catalog_id="excl", action="save")
-    assert r.status_code == 422 and "could not be resolved on TMDB" in r.text
+    assert r.status_code == 422 and "Couldn&#39;t look up your exclusions on TMDB" in r.text
     assert catalog_row("excl") is None
 
 
@@ -626,7 +629,7 @@ def test_dry_run_is_queued_and_its_result_shown(client):
     page = client.get("/configure/catalogs/alpha_list").text
     assert "<b>160</b>suggested" in page and "<b>104</b>passed your rules" in page and "<b>30</b>picked" in page
     assert "rating too low · 21" in page
-    assert "&lt;script&gt; · 1" in page and "<script> · 1" not in page and "&lt;b&gt;x&lt;/b&gt; 2" in page
+    assert "&lt;script&gt; · 1" in page and "<script> · 1" not in page and "&lt;b&gt;x&lt;/b&gt;" in page
 
 
 def test_dry_run_of_a_disabled_catalog_is_refused(client):
@@ -658,13 +661,13 @@ def test_rollback_and_refusal(client):
     page = client.get("/configure/catalogs/alpha_list").text
     assert f"/rollback/{ids[0]}" in page and f"/rollback/{ids[2]}" not in page  # active one has no button
     confirm = client.get(f"/configure/catalogs/alpha_list/rollback/{ids[0]}")
-    assert confirm.status_code == 200 and f"List {ids[0]} (published" in confirm.text
+    assert confirm.status_code == 200 and f"Version {ids[0]} (published" in confirm.text
     epoch = catalog_row("alpha_list")["epoch"]
     r = client.post(f"/configure/catalogs/alpha_list/rollback/{ids[0]}", data={"csrf": token(client)})
     assert r.status_code == 303 and r.headers["location"].endswith("msg=rolled_back#activity-tab")
     assert _active_id() == ids[0] and catalog_row("alpha_list")["epoch"] == epoch + 1
     page = client.get(r.headers["location"]).text
-    assert "Rolled back" in page and f"/rollback/{ids[1]}" not in page  # revoked now
+    assert "That earlier version is showing again" in page and f"/rollback/{ids[1]}" not in page  # revoked now
 
     r = client.post(f"/configure/catalogs/alpha_list/rollback/{ids[1]}", data={"csrf": token(client)})
     assert r.status_code == 409 and "revoked" in r.text
@@ -737,7 +740,7 @@ def test_missing_tmdb_key_is_a_validation_error(client, app, monkeypatch):
     app.state.admin_app.state.tmdb_client_factory = TMDBClient
     vals = values_for({"prompt": PROMPT, "blacklist_titles": ["Film 3"]})
     r = post_form(client, "/configure/new", vals, catalog_id="excl", action="save")
-    assert r.status_code == 422 and "could not be resolved on TMDB" in r.text
+    assert r.status_code == 422 and "Couldn&#39;t look up your exclusions on TMDB" in r.text
     assert catalog_row("excl") is None
 
 
@@ -910,9 +913,9 @@ def test_list_sizes_are_shown_as_numbers(client):
     pages.append(client.get("/configure/catalogs/alpha_list/rollback/1").text)
     for html in pages:
         assert "built-in method" not in html
-    assert "4 films" in pages[0]
+    assert "4 movies" in pages[0]
     assert "<td>3</td>" in pages[1] and "<td>4</td>" in pages[1]
-    assert "3 films" in pages[2]
+    assert "3 movies" in pages[2]
 
 
 # --------------------------------------------------------------------------- simple form (PLAN.md section 26)
@@ -1040,9 +1043,9 @@ def test_basic_settings_come_first_and_the_rest_is_advanced(client):
     simple, advanced = page.split('class="advanced"', 1)
     for name in editor.BASIC_FIELDS:
         assert f'name="{name}"' in simple, name
-    for name in ("focus", "weekday_focus", "categories", "position", "temperature"):
+    for name in ("focus", "weekday_focus", "categories", "enabled", "temperature"):
         assert f'name="{name}"' in advanced and f'name="{name}"' not in simple, name
-    assert "What should this list be?" in simple and "catalog id" not in page.lower()
+    assert "What kind of movies do you want?" in simple and "catalog id" not in page.lower()
 
 
 def test_new_field_still_appears_in_advanced(monkeypatch):
@@ -1061,3 +1064,157 @@ def test_pages_show_the_logo_and_no_signed_in_label(client):
     for path in ("/configure/", "/configure/new", "/configure/catalogs/alpha_list"):
         html = client.get(path).text
         assert 'src="/static/logo_256.png"' in html and "Signed in as" not in html
+
+
+# --------------------------------------------------------------------------- dashboard, pickers (PLAN.md section 27)
+
+
+def test_dashboard_cards_can_run_test_edit_and_delete(client):
+    add_catalog()
+    page = client.get("/configure/").text
+    assert "/configure/catalogs/alpha_list/refresh" in page and "▶ Run now" in page
+    assert "/configure/catalogs/alpha_list/dry-run" in page and "Test run" in page
+    assert 'value="removed"' in page and "data-confirm=" in page
+    r = client.post(
+        "/configure/catalogs/alpha_list/state",
+        data={"csrf": token(client), "state": "removed", "base_rev": catalog_row("alpha_list")["config_rev"]},
+    )
+    assert r.status_code == 303 and "msg=deleted" in r.headers["location"]
+    assert catalog_row("alpha_list")["state"] == "removed"
+
+
+def test_dragging_reorders_without_touching_definitions(client):
+    revs = {cid: add_catalog(cid) for cid in ("alpha_one", "beta_two", "gamma_three")}
+    epochs = {cid: catalog_row(cid)["epoch"] for cid in revs}
+    r = client.post("/configure/order", data={"csrf": token(client), "order": "gamma_three,alpha_one,bad id,beta_two"})
+    assert r.status_code == 200 and r.json()["count"] == 3
+    page = client.get("/configure/").text
+    assert page.index('data-id="gamma_three"') < page.index('data-id="alpha_one"') < page.index('data-id="beta_two"')
+    for cid in revs:
+        assert catalog_row(cid)["config_rev"] == revs[cid] and catalog_row(cid)["epoch"] == epochs[cid]
+    assert client.post("/configure/order", data={"order": "beta_two"}).status_code == 403  # CSRF as usual
+
+
+def test_saving_keeps_the_dashboard_order(client):
+    add_catalog("alpha_one")
+    add_catalog("beta_two")
+    client.post("/configure/order", data={"csrf": token(client), "order": "beta_two,alpha_one"})
+    rev = catalog_row("alpha_one")["config_rev"]
+    r = post_form(
+        client, "/configure/catalogs/alpha_one/save", values_for({"prompt": "Changed."}), base_rev=rev, action="save"
+    )
+    assert r.status_code == 303
+    assert catalog_row("alpha_one")["position"] == 1 and catalog_row("beta_two")["position"] == 0
+
+
+def test_hidden_fields_are_kept_on_save(client):
+    rev = add_catalog(position=4, blacklist_tmdb_ids=[11, 12])
+    vals = values_for({"prompt": PROMPT, "position": 4, "blacklist_tmdb_ids": [11, 12]})
+    vals.pop("position", None)
+    vals.pop("blacklist_tmdb_ids", None)
+    page = client.get("/configure/catalogs/alpha_list").text
+    assert 'name="position"' not in page and 'name="blacklist_tmdb_ids"' not in page
+    r = post_form(client, "/configure/catalogs/alpha_list/save", vals, base_rev=rev, action="save")
+    assert r.status_code == 303 and catalog_row("alpha_list")["config_rev"] == rev
+
+
+def test_movie_suggestions_come_from_tmdb(client):
+    r = client.get("/configure/suggest", params={"kind": "movie", "q": "Film 3"})
+    assert r.status_code == 200 and r.json()[0]["value"].startswith("Film 3 (")
+    assert client.get("/configure/suggest", params={"kind": "movie", "q": "x"}).json() == []  # too short
+    assert client.get("/configure/suggest", params={"kind": "nope", "q": "Film 3"}).json() == []
+    r = client.get("/configure/suggest", params={"kind": "collection", "q": "Saga Nine"})
+    assert r.json() == [{"label": "Saga Nine Collection", "value": "Saga Nine Collection"}]
+
+
+def test_suggestions_need_a_session(anon):
+    assert anon.get("/configure/suggest", params={"kind": "movie", "q": "Film 3"}).status_code == 303
+
+
+def test_model_suggestions_filter_the_provider_list(client, monkeypatch):
+    async def fake_ids():
+        return ["google/gemini-flash-lite", "google/gemini-pro", "openai/gpt-mini"]
+
+    monkeypatch.setattr(admin_mod, "_model_ids", fake_ids)
+    r = client.get("/configure/suggest", params={"kind": "model", "q": "gemini lite"})
+    assert r.json() == [{"label": "google/gemini-flash-lite", "value": "google/gemini-flash-lite"}]
+
+
+def test_failed_suggestions_are_just_empty(client, monkeypatch):
+    async def boom():
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(admin_mod, "_model_ids", boom)
+    assert client.get("/configure/suggest", params={"kind": "model", "q": "gemini"}).json() == []
+
+
+def test_test_run_picks_are_shown(client):
+    rev = add_catalog()
+    with db.session() as conn, db.transaction(conn):
+        conn.execute(
+            "INSERT INTO runs (catalog_id, config_rev, epoch, trigger, dry_run, started_at, status, stage_counts_json, "
+            "reject_reasons_json, model_calls, preview_json) VALUES ('alpha_list', ?, 0, 'admin', 1, ?, 'ok', ?, ?, 2, ?)",
+            (
+                rev,
+                db.now_ms(),
+                json.dumps({"generated": 9, "eligible": 7, "selected": 2, "dropped_rows": 0, "model_calls_ok": 2}),
+                json.dumps({}),
+                json.dumps([["Film <1>", 1999, "tt0000001"], ["Film 2", None, "tt0000002"]]),
+            ),
+        )
+    page = client.get("/configure/catalogs/alpha_list").text
+    assert "2 movies it picked" in page and "(not published)" in page
+    assert "Film &lt;1&gt;" in page and "1999" in page and "Film 2" in page
+    assert "2 AI requests" in page and "dropped_rows" not in page and "model_calls_ok" not in page
+
+
+def test_settings_page_offers_pickers_and_no_yaml_tab(client):
+    add_catalog()
+    page = client.get("/configure/catalogs/alpha_list").text
+    assert 'href="#yaml-tab"' not in page and "Edit as YAML" not in page
+    for name, widget in (
+        ("languages", "chips"),
+        ("excluded_genre_ids", "chips"),
+        ("blacklist_titles", "chips"),
+        ("franchise_denylist", "denylist"),
+        ("weekday_focus", "weekdays"),
+        ("decade_min", "pairs"),
+        ("model", "suggest"),
+    ):
+        assert re.search(rf'name="{name}"[^>]*data-widget="{widget}"', page, re.S), name
+    assert "&#34;English&#34;" in page or '"English"' in page  # language names, not codes
+    assert "Cancel" in page and "👁 Preview" in page and "⚗ Test run" in page and "▶ Run now" in page
+
+
+def test_slider_ranges_are_sensible():
+    by_name = {f.name: f for f in editor.basic_fields()}
+    assert by_name["year_min"].minimum == 1900 and by_name["year_min"].maximum <= 2100
+    assert by_name["min_runtime"].maximum == 240
+    adv = {f.name: f for _, fs in editor.advanced_groups() for f in fs}
+    assert adv["history_window_runs"].maximum == 30 and not adv["max_prompt_chars"].slider
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("year_min: Input should be a valid integer, unable to parse", "Released from: enter a whole number"),
+        (
+            "Value error, year_min must not be greater than year_max",
+            "“Released from” must not be greater than “Released until”",
+        ),
+        ("target_count: Input should be less than or equal to 250", "Movies in the catalog: must be at most 250"),
+        (
+            "Value error, on_shortfall: publish_partial needs min_accept",
+            "When a refresh comes up short: “Publish what was found” needs “Smallest catalog worth publishing”",
+        ),
+        ("something else entirely", "something else entirely"),
+    ],
+)
+def test_errors_are_in_plain_language(raw, expected):
+    assert admin_mod.friendly_error(raw) == expected
+
+
+def test_notices_are_short_and_plain(client):
+    add_catalog()
+    r = client.get("/configure/catalogs/alpha_list?msg=saved").text
+    assert "Saved." in r and "definition" not in r.split("Saved.")[1][:40]

@@ -3,43 +3,71 @@
 <div class="stack">
 {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
 
-<section class="card hero">
+<section class="card hero hero-brand">
+  <img class="hero-logo" src="/static/logo_256.png" alt="AI Catalogs logo">
+  <div class="hero-body">
   <h2>Your addon link</h2>
-  <p class="sub">Paste it into AIOMetadata once. Every catalog you create here shows up there after its first refresh.</p>
+  <p class="sub">Paste it into AIOMetadata once. Every catalog you create here shows up there after its first run.</p>
   <div class="copy-row">
     <input type="text" id="manifest-url" value="{{ manifest_url }}" readonly class="mono" aria-label="Addon link">
     <button type="button" data-copy="manifest-url">Copy</button>
   </div>
+  </div>
 </section>
 
 <div class="row">
-  <h1>Catalogs</h1>
+  <div>
+    <h1>Catalogs</h1>
+    {% if catalogs|length > 1 %}<p class="muted small">Drag <span class="grip-inline" aria-hidden="true">⠿</span> to set the order your apps show them in.</p>{% endif %}
+  </div>
   {% if catalogs %}<a class="button" href="{{ prefix }}/new">+ New catalog</a>{% endif %}
 </div>
 
 {% if not catalogs %}
 <div class="empty">
   <h2>No catalogs yet</h2>
-  <p>Describe a list of films in your own words and AI Catalogs keeps it fresh for you.</p>
+  <p>Describe the kind of movies you want and AI Catalogs keeps a fresh catalog of them for you.</p>
   <a class="button" href="{{ prefix }}/new">+ Create your first catalog</a>
 </div>
 {% else %}
-<div class="grid">
+<div class="grid" id="catalog-grid" data-order-url="{{ prefix }}/order" data-csrf="{{ csrf }}">
   {% for c in catalogs %}
   {% set run = c.recent_runs[0] if c.recent_runs else None %}
-  <a class="cat" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">
+  {% set busy = c.open_job is defined and c.open_job %}
+  <div class="cat" data-id="{{ c.catalog_id }}">
     <div class="row">
-      <span class="name">{{ c.name }}</span>
+      <div class="row-start">
+        <button type="button" class="grip" aria-label="Drag to reorder {{ c.name }}" title="Drag to reorder">⠿</button>
+        <a class="name" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">{{ c.name }}</a>
+      </div>
       {% if c.last_error %}<span class="chip bad">Needs attention</span>
-      {% elif c.state == "enabled" %}<span class="chip live">Live</span>
+      {% elif busy %}<span class="chip busy">Running</span>
+      {% elif c.state == "enabled" %}<span class="chip live">Visible</span>
       {% else %}<span class="chip off">Hidden</span>{% endif %}
     </div>
-    <span class="meta">
-      {% if c.active_snapshot %}{{ c.active_snapshot["items"] }} films · updated {{ c.active_snapshot.created_at | when }}
-      {% else %}No list yet{% endif %}
-    </span>
-    {% if run %}<span class="meta">Last run: {{ run_kind(run) }} · {{ run_status(run) }}</span>{% endif %}
-  </a>
+    <a class="meta" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">
+      {% if c.active_snapshot %}{{ c.active_snapshot["items"] }} movies · updated {{ c.active_snapshot.created_at | when }}
+      {% else %}Not run yet: press Run now to fill it{% endif %}
+    </a>
+    {% if run %}<span class="meta">Last: {{ run_kind(run) }} · {{ run_status(run) }}</span>{% endif %}
+    <div class="card-actions">
+      <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/refresh" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="small" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI now and publish a new version">▶ Run now</button>
+      </form>
+      <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/dry-run" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="small secondary" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI and show the results without publishing">⚗ Test run</button>
+      </form>
+      <a class="button small ghost" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">Edit</a>
+      <form method="post" action="{{ prefix }}/catalogs/{{ c.catalog_id }}/state" class="inline push-right" data-confirm="Delete “{{ c.name }}”? It disappears from your apps.">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="base_rev" value="{{ c.config_rev }}">
+        <input type="hidden" name="back" value="index">
+        <button type="submit" name="state" value="removed" class="small ghost danger-text" title="Delete this catalog" aria-label="Delete {{ c.name }}">🗑</button>
+      </form>
+    </div>
+  </div>
   {% endfor %}
 </div>
 {% endif %}

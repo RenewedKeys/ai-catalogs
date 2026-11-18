@@ -5,52 +5,53 @@
 <h1 align="center">AI Catalogs</h1>
 
 <p align="center">
-  Fresh, hand-picked movie lists for Stremio, chosen by AI and refreshed on your schedule.
+  Fresh, hand-picked movie catalogs for Stremio, chosen by AI and refreshed on your schedule.
 </p>
 
 ---
 
-Describe the kind of films you want, and AI Catalogs builds the list for you. It asks an AI
+Describe the kind of movies you want, and AI Catalogs builds the catalog for you. It asks an AI
 model for ideas, checks every film against TMDB, drops anything that doesn't fit your rules,
-and serves the result to [AIOMetadata](https://github.com/cedya77/aiometadata), which shows it
+and serves it to [AIOMetadata](https://github.com/cedya77/aiometadata), which shows it
 in Stremio as a normal catalog. Each refresh brings new picks, and nothing you saw recently
 comes back too soon.
 
 ## All your catalogs in one place
 
-See every catalog at a glance and copy the one link you paste into AIOMetadata.
+See every catalog at a glance, drag them into order, run one with a click, and copy the one link
+you paste into AIOMetadata.
 
 ![The catalog list with the addon URL](docs/images/list.png)
 
 ## Describe what you want
 
-Write what the list should be about in plain words, pick how many films and how often it
-refreshes. No special syntax needed.
+Describe the movies you want in plain words, pick how many and how often it runs. No special
+syntax needed.
 
 ![Writing the catalog description](docs/images/prompt.png)
 
 ## Set your rules
 
-Minimum rating, years, length, language and films to never include. Films that break a rule
-never make the list. Fine-tuning lives under Advanced, if you ever want it.
+Minimum rating, years, length, language and movies to never include, picked from suggestions as
+you type. Movies that break a rule never make the catalog. Fine-tuning lives under Advanced.
 
 ![Sliders for rating, year and runtime](docs/images/limits.png)
 
 ## Try it before it goes live
 
-A test run shows how many films the AI suggested, how many passed your rules and why the rest
-were turned away, without changing the list your viewers see. Happy with it? Refresh now.
-Didn't like a new list? Bring back an earlier one in two clicks.
+A test run shows the movies the AI would pick, how many passed your rules and why the rest were
+turned away, without changing what your apps show. Happy with it? Run it for real. Didn't like a
+new version? Bring back an earlier one in two clicks.
 
 ![Runs, dry runs and published lists](docs/images/runs.png)
 
 ## Good to know
 
 - **Refreshes on its own.** Daily, weekly, or whenever you like.
-- **No repeats.** Films from recent lists are held back so every refresh feels new.
+- **No repeats.** Movies from recent versions are held back so every refresh feels new.
 - **Skips what you've watched**, if you connect MDBList.
 - **Stays within budget.** You set how many AI requests it may make each day.
-- **Your lists stay private.** Your addon link has a secret part, set during setup, so only people you share it with can see them.
+- **Your catalogs stay private.** Your addon link has a secret part, set during setup, so only people you share it with can see them.
 
 ## Get started
 
