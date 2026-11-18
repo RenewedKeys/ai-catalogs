@@ -84,21 +84,22 @@ Stremio addon settings path, so proxy rules that protect addon settings pages co
 - **Addon URL**: the catalog list shows the manifest URL to paste into AIOMetadata, with a copy
   button (it contains `ADDON_ACCESS_TOKEN`; this is the only page that shows it).
 
-- **Edit** a catalog in a form generated from the definition fields (sliders for bounded
-  limits, an empty box means "off"), or as raw YAML. **Validate** runs the same checks as
-  `python -m app.curation validate` and shows the prompt rendered for a sample day; **Save**
-  makes the definition live at once (a refresh in progress ends `superseded` and is queued again).
+- **Create** a catalog with a name and a plain description; its id is made from the name. The
+  form asks for the essentials (list size, refresh schedule, rating, years, length, language,
+  films to never include); every other definition field is under **Advanced settings**, and the
+  **YAML** tab edits the whole definition as text. A description needs no template variables:
+  the list size, your rules and recently shown films are added to the AI request automatically.
+  **Check** runs the same checks as `python -m app.curation validate` and shows the request the
+  AI will get; **Save** makes the definition live at once.
 - **Files vs editor.** A catalog from `catalogs.d` is read-only in the editor until you press
-  **Move to editor**. From then on the editor owns it: the file is ignored (delete or rename it)
-  and its removal does not remove the catalog. The move is one-way; to go back, export the YAML,
-  delete the catalog in the editor, then put the file back. New catalogs can be created in the
-  editor directly. **Export YAML** downloads a definition (comments are not kept).
-- **Dry run** queues a dry run of the saved definition for the worker and shows its stage counts
-  and reject reasons when it ends. It spends model calls but publishes nothing. To tune a new
-  catalog without it going live on a schedule: save it without `schedule`, dry-run until the
-  counts look right, then add the schedule.
-- **Rollback**: the catalog page lists the published lists; roll back to any that still has its
-  payload and was not revoked.
+  **Edit it here instead**. From then on the editor owns it: the file is ignored (delete or
+  rename it) and its removal does not remove the catalog. The move is one-way; to go back,
+  download the YAML, delete the catalog in the editor, then put the file back.
+- **Activity**: **Refresh now** publishes a new list; **Test run** (a dry run) runs everything
+  except publishing and shows how many films were suggested, passed your rules and were picked,
+  and why the rest were turned away. To tune a new catalog, leave Refresh on *Manually*, test
+  until the numbers look right, then pick a schedule.
+- **Bring back** an earlier published list (a rollback) from the Activity tab.
 
 Security (password mode): one password, a signed HttpOnly SameSite=Strict cookie (Secure when `PUBLIC_BASE_URL`
 is https) that lasts 12 hours, a CSRF token on every form, no CORS. Logging out clears the cookie

@@ -18,30 +18,29 @@ comes back too soon.
 
 ## All your catalogs in one place
 
-Sign in, see every catalog and when it last updated, and copy the one link you paste into
-AIOMetadata.
+See every catalog at a glance and copy the one link you paste into AIOMetadata.
 
 ![The catalog list with the addon URL](docs/images/list.png)
 
 ## Describe what you want
 
-Write what the list should be about in plain words. Add categories to mix things up, and the
-picks change every day.
+Write what the list should be about in plain words, pick how many films and how often it
+refreshes. No special syntax needed.
 
 ![Writing the catalog description](docs/images/prompt.png)
 
 ## Set your rules
 
-Minimum rating, years, runtime, languages and more, set with sliders. Films that break a rule
-never make the list.
+Minimum rating, years, length, language and films to never include. Films that break a rule
+never make the list. Fine-tuning lives under Advanced, if you ever want it.
 
 ![Sliders for rating, year and runtime](docs/images/limits.png)
 
 ## Try it before it goes live
 
-A dry run shows how many films the AI suggested, how many passed your rules and why the rest
-were turned away, without changing the list your viewers see. Didn't like a new list? Roll
-back to an earlier one in two clicks.
+A test run shows how many films the AI suggested, how many passed your rules and why the rest
+were turned away, without changing the list your viewers see. Happy with it? Refresh now.
+Didn't like a new list? Bring back an earlier one in two clicks.
 
 ![Runs, dry runs and published lists](docs/images/runs.png)
 

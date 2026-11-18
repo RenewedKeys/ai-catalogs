@@ -998,3 +998,34 @@ Asked by the owner: nothing from the upstream fork should remain that this app d
   a list's size (Jinja resolves `x.items` to `dict.items`); templates now use `x["items"]`, with
   a regression test.
 - Merged remote branches deleted on GitHub (their PRs keep a restore button).
+
+## 26. Simple editor, dark redesign
+
+Asked by the owner: the generated form was confusing (catalog id, position, focus, weekday focus,
+categories …) and plain-looking; a normal person should only need a name and a description.
+
+- **Simple form.** Up front: name, the description (`prompt`), list size, a refresh widget
+  (Manually / Every day at / Every week on / Custom cron, plus time zone, filled from the
+  browser), and the rules (rating, number of ratings, years, length, languages, skip watched,
+  never include). Everything else is still generated from `CatalogDefinition` under
+  **Advanced settings** with plain labels (`editor.LABELS`, `HELP`); a field added later lands
+  there by itself. The YAML tab stays.
+- **No template needed.** A description without `{{ ... }}` works as is: the system message
+  already asks for `request_count` films, and `render_prompt` appends the limits, history and
+  watched blocks the template does not place. So the "variables" are optional extras, not
+  something an LLM has to extract from the description; they stay under Advanced.
+- **Ids from names.** A new catalog's id is the name's words joined by `_`, made unique
+  (`_2`, `_3` …); there is no id field. Ids still never change once created.
+- **Schedule round trip.** The widget maps `M H * * *` / `M H * * D` to daily/weekly and
+  everything else to custom; a stored schedule whose meaning is unchanged is kept byte-for-byte
+  (spelling, omitted timezone), so an untouched save still keeps `config_rev`.
+- **Activity tab**: **Refresh now** (new `POST /configure/catalogs/{id}/refresh`, a refresh job
+  with trigger `admin`) next to **Test run** (the dry run); runs are shown as
+  suggested → passed your rules → picked, with plain reject reasons and the raw counts under
+  "Details". Redirects after runs, visibility changes and rollbacks open the Activity tab.
+- **Look**: dark only, layered gradient background, cards, the logo in the top bar and as the
+  favicon; the "Signed in as" label is gone (Log out stays in password mode).
+- Tests: simple create (id from name, uniqueness), plain description preview, refresh widget
+  (build, exact round trip, errors), Refresh now, basic vs advanced placement, a new field
+  landing under Advanced, logo present and no signed-in label; the HTML round-trip test reads
+  the refresh widget like a browser.

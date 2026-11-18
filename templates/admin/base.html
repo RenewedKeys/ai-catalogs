@@ -4,24 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>{% block title %}Catalog editor{% endblock %}</title>
+<meta name="color-scheme" content="dark">
+<title>{% block title %}AI Catalogs{% endblock %}</title>
+<link rel="icon" type="image/png" href="/static/logo_256.png">
 <link rel="stylesheet" href="{{ prefix }}/static/admin.css">
 {% if logged_in %}<script src="{{ prefix }}/static/admin.js" defer></script>{% endif %}
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="{{ prefix }}/">Catalog editor</a>
-  {% if logged_in and proxy_auth %}
-  <span class="muted">Signed in as {{ user }}</span>
-  {% elif logged_in %}
+  <a class="brand" href="{{ prefix }}/"><img src="/static/logo_256.png" alt="">AI Catalogs</a>
+  {% if logged_in and not proxy_auth %}
   <form method="post" action="{{ prefix }}/logout" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button type="submit" class="link">Log out</button>
+    <button type="submit" class="ghost">Log out</button>
   </form>
   {% endif %}
 </header>
 <main>
-{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
 {% block content %}{% endblock %}
 </main>
 </body>

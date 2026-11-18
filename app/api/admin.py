@@ -94,13 +94,59 @@ NOTICES = {
     "moved": "The catalog is now managed in the editor. Delete or rename its file in catalogs.d.",
     "enabled": "Catalog enabled.",
     "disabled": "Catalog disabled.",
-    "dry_run_queued": "Dry run queued. The worker runs it; this page updates when it ends.",
+    "dry_run_queued": "Test run started. Results appear under Activity when it finishes.",
+    "refresh_queued": "Refresh started. The new list goes live when it finishes.",
     "already_open": "The catalog already has an open job; wait for it to finish.",
     "daily_limit": "max_runs_per_day is reached for this catalog.",
     "not_enabled": "Only an enabled catalog can run.",
     "rolled_back": "Rolled back. That list is being served again.",
-    "deleted": "Catalog deleted (marked removed).",
+    "deleted": "Catalog deleted.",
 }
+
+RUN_KINDS = {"refresh": "Refresh", "dry_run": "Test run"}
+RUN_STATUSES = {
+    "ok": "done",
+    "running": "running",
+    "failed": "failed",
+    "superseded": "replaced by a newer one",
+    "abandoned": "interrupted",
+}
+REJECT_LABELS = {
+    "no_match": "not found on TMDB",
+    "not_found": "not found on TMDB",
+    "runtime_missing": "no runtime",
+    "runtime_short": "too short",
+    "rating_low": "rating too low",
+    "votes_low": "too few ratings",
+    "language": "other language",
+    "genre_excluded": "excluded genre",
+    "year_missing": "no year",
+    "year_out_of_range": "outside your years",
+    "adult": "adult",
+    "not_released": "not released yet",
+    "imdb_id_missing": "no IMDb id",
+    "blacklisted": "on your never-include list",
+}
+
+
+def when(value: Any) -> str:
+    """'2026-11-17T23:12:55Z' -> '2026-11-17 23:12 UTC'."""
+    text = str(value or "")
+    if len(text) >= 16 and text[10] == "T":
+        return f"{text[:10]} {text[11:16]} UTC"
+    return text
+
+
+def run_kind(run: dict[str, Any]) -> str:
+    return RUN_KINDS.get(run.get("kind"), str(run.get("kind", "")).replace("_", " ").capitalize())
+
+
+def run_status(run: dict[str, Any]) -> str:
+    return RUN_STATUSES.get(run.get("status"), str(run.get("status", "")))
+
+
+def reject_label(key: str) -> str:
+    return REJECT_LABELS.get(key, key.replace("_", " "))
 
 
 class EditorConfigError(RuntimeError):
@@ -369,6 +415,8 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
     admin = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     admin.state.tmdb_client_factory = tmdb_client_factory or TMDBClient
     env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=select_autoescape(default=True))
+    env.filters["when"] = when
+    env.globals.update(run_kind=run_kind, run_status=run_status, reject_label=reject_label)
 
     def page(request: Request, template: str, status_code: int = 200, **context) -> HTMLResponse:
         sess = getattr(request.state, "session", None)
@@ -379,8 +427,9 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
         context["user"] = sess.get("user") if sess else None
         return HTMLResponse(env.get_template(template).render(**context), status_code=status_code)
 
-    def redirect(path: str, msg: Optional[str] = None) -> RedirectResponse:
-        return RedirectResponse(PREFIX + path + (f"?msg={msg}" if msg else ""), status_code=303)
+    def redirect(path: str, msg: Optional[str] = None, tab: str = "") -> RedirectResponse:
+        url = PREFIX + path + (f"?msg={msg}" if msg else "") + (f"#{tab}" if tab else "")
+        return RedirectResponse(url, status_code=303)
 
     def notice(request: Request) -> Optional[str]:
         return NOTICES.get(request.query_params.get("msg", ""))
@@ -505,7 +554,12 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
             status_code,
             catalog=catalog,
             catalog_id=catalog["catalog_id"] if catalog else catalog_id,
-            groups=editor.grouped_fields(),
+            basic=editor.basic_fields(),
+            advanced=editor.advanced_groups(),
+            label_of=editor.label_of,
+            help_of=editor.help_of,
+            weekdays=list(enumerate(editor.WEEKDAY_NAMES)),
+            mdblist_ready=bool(settings.MDBLIST_API_KEY),
             values=values if values is not None else editor.form_values(definition),
             yaml_text=yaml_text if yaml_text is not None else editor.definition_yaml(definition),
             mode=mode,
@@ -584,6 +638,16 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
     async def create(request: Request):
         form = await verified_form(request, request.state.session["sid"])
         catalog_id = form.get("catalog_id", "").strip()
+        if not catalog_id:  # the simple form has no id field: derive it from the name
+            name = form.get("name", "")
+            if form.get("mode") == "yaml":
+                try:
+                    parsed = editor.parse_definition_yaml(form.get("yaml", ""))
+                    name = str(parsed.get("name") or "") if isinstance(parsed, dict) else ""
+                except DefinitionError:
+                    name = ""
+            taken = await run_in_threadpool(editor.taken_catalog_ids)
+            catalog_id = editor.catalog_id_for(name, taken)
         return await _submit(request, catalog_id, None, form)
 
     @admin.post("/catalogs/{catalog_id}/save")
@@ -627,14 +691,21 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
             raise HTTPException(status_code=409, detail=str(e)) from None
         if state == "removed":
             return redirect("/", "deleted")
-        return redirect(f"/catalogs/{catalog_id}", state)
+        return redirect(f"/catalogs/{catalog_id}", state, "activity-tab")
 
     @admin.post("/catalogs/{catalog_id}/dry-run")
     async def dry_run(request: Request, catalog_id: str):
         await verified_form(request, request.state.session["sid"])
         code, body = await run_in_threadpool(enqueue, catalog_id, "dry_run", "admin")
         msg = {202: "dry_run_queued", 409: "already_open", 429: "daily_limit"}.get(code, "not_enabled")
-        return redirect(f"/catalogs/{catalog_id}", msg)
+        return redirect(f"/catalogs/{catalog_id}", msg, "activity-tab")
+
+    @admin.post("/catalogs/{catalog_id}/refresh")
+    async def refresh_now(request: Request, catalog_id: str):
+        await verified_form(request, request.state.session["sid"])
+        code, body = await run_in_threadpool(enqueue, catalog_id, "refresh", "admin")
+        msg = {202: "refresh_queued", 409: "already_open", 429: "daily_limit"}.get(code, "not_enabled")
+        return redirect(f"/catalogs/{catalog_id}", msg, "activity-tab")
 
     @admin.get("/catalogs/{catalog_id}/rollback/{snapshot_id}")
     async def confirm_rollback(request: Request, catalog_id: str, snapshot_id: int):
@@ -657,6 +728,6 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
                 raise HTTPException(status_code=404, detail="Not Found") from None
             snap = next((s for s in catalog["snapshots"] if s["id"] == snapshot_id), {"id": snapshot_id})
             return page(request, "rollback.html", 409, catalog=catalog, snap=snap, error=str(e))
-        return redirect(f"/catalogs/{catalog_id}", "rolled_back")
+        return redirect(f"/catalogs/{catalog_id}", "rolled_back", "activity-tab")
 
     return admin

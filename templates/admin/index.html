@@ -1,29 +1,47 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="panel manifest">
-  <h2>Addon URL</h2>
-  <p class="muted">Paste this into AIOMetadata's Custom Manifest Integration. A catalog appears there once it has published its first list.</p>
-  <div class="row">
-    <input type="text" id="manifest-url" value="{{ manifest_url }}" readonly>
-    <button type="button" class="button" data-copy="manifest-url">Copy</button>
+<div class="stack">
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+
+<section class="card hero">
+  <h2>Your addon link</h2>
+  <p class="sub">Paste it into AIOMetadata once. Every catalog you create here shows up there after its first refresh.</p>
+  <div class="copy-row">
+    <input type="text" id="manifest-url" value="{{ manifest_url }}" readonly class="mono" aria-label="Addon link">
+    <button type="button" data-copy="manifest-url">Copy</button>
   </div>
 </section>
-<div class="row"><h1>Catalogs</h1><a class="button" href="{{ prefix }}/new">New catalog</a></div>
-{% if not catalogs %}<p class="muted">No catalogs yet. Create one here, or move one from catalogs.d by opening it.</p>{% else %}
-<table class="list">
-  <thead><tr><th>Catalog</th><th>Managed by</th><th>State</th><th>Active list</th><th>Last run</th></tr></thead>
-  <tbody>
+
+<div class="row">
+  <h1>Catalogs</h1>
+  {% if catalogs %}<a class="button" href="{{ prefix }}/new">+ New catalog</a>{% endif %}
+</div>
+
+{% if not catalogs %}
+<div class="empty">
+  <h2>No catalogs yet</h2>
+  <p>Describe a list of films in your own words and AI Catalogs keeps it fresh for you.</p>
+  <a class="button" href="{{ prefix }}/new">+ Create your first catalog</a>
+</div>
+{% else %}
+<div class="grid">
   {% for c in catalogs %}
-    {% set run = c.recent_runs[0] if c.recent_runs else None %}
-    <tr>
-      <td><a href="{{ prefix }}/catalogs/{{ c.catalog_id }}">{{ c.name }}</a><br><span class="muted">{{ c.catalog_id }}</span></td>
-      <td>{{ "editor" if c.source == "editor" else ("file" if c.source == "file" else c.source) }}</td>
-      <td>{{ c.state }}{% if c.last_error %} <span class="error">· definition error</span>{% endif %}</td>
-      <td>{% if c.active_snapshot %}{{ c.active_snapshot["items"] }} items, {{ c.active_snapshot.created_at }}{% else %}<span class="muted">none</span>{% endif %}</td>
-      <td>{% if run %}{{ run.kind }} · {{ run.status }}{% if run.error_category %} <span class="error">{{ run.error_category }}</span>{% endif %}{% else %}<span class="muted">-</span>{% endif %}</td>
-    </tr>
+  {% set run = c.recent_runs[0] if c.recent_runs else None %}
+  <a class="cat" href="{{ prefix }}/catalogs/{{ c.catalog_id }}">
+    <div class="row">
+      <span class="name">{{ c.name }}</span>
+      {% if c.last_error %}<span class="chip bad">Needs attention</span>
+      {% elif c.state == "enabled" %}<span class="chip live">Live</span>
+      {% else %}<span class="chip off">Hidden</span>{% endif %}
+    </div>
+    <span class="meta">
+      {% if c.active_snapshot %}{{ c.active_snapshot["items"] }} films · updated {{ c.active_snapshot.created_at | when }}
+      {% else %}No list yet{% endif %}
+    </span>
+    {% if run %}<span class="meta">Last run: {{ run_kind(run) }} · {{ run_status(run) }}</span>{% endif %}
+  </a>
   {% endfor %}
-  </tbody>
-</table>
+</div>
 {% endif %}
+</div>
 {% endblock %}

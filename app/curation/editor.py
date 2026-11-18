@@ -274,6 +274,7 @@ def form_values(definition: Mapping[str, Any]) -> dict[str, str]:
             out[s.name] = str(v)
         else:  # a value of an unexpected shape: show it as YAML in a text box
             out[s.name] = to_yaml(v).strip()
+    out.update(schedule_values(definition.get("schedule")))
     return out
 
 
@@ -331,7 +332,10 @@ def definition_from_form(form: Mapping[str, Optional[str]], base: Mapping[str, A
     errors = []
     for s in editor_fields():
         try:
-            v = _parse_field(s, form.get(s.name))
+            if s.name == "schedule" and "sched_mode" in form:
+                v = schedule_from_form(form, base.get("schedule"))
+            else:
+                v = _parse_field(s, form.get(s.name))
         except DefinitionError as e:
             errors.append(str(e))
             continue
@@ -495,3 +499,224 @@ def set_state(catalog_id: str, state: str, *, base_rev: str, db_path: Optional[s
                 defn["enabled"] = False
         accept_definition(conn, catalog_id, row["name"], defn, state=state, position=row["position"])
         conn.execute("UPDATE catalog_defs SET source = 'editor' WHERE catalog_id = ?", (catalog_id,))
+
+
+# ------------------------------------------------------------------ the simple form (PLAN.md section 26)
+
+# Shown up front, in this order, with plain labels. Everything else is under "Advanced".
+BASIC_FIELDS = (
+    "name",
+    "prompt",
+    "target_count",
+    "min_vote_average",
+    "min_vote_count",
+    "year_min",
+    "year_max",
+    "min_runtime",
+    "languages",
+    "exclude_watched",
+    "blacklist_titles",
+)
+
+LABELS = {
+    "name": "Name",
+    "prompt": "What should this list be?",
+    "target_count": "Films in the list",
+    "min_vote_average": "Minimum rating",
+    "min_vote_count": "Minimum number of ratings",
+    "year_min": "Released from",
+    "year_max": "Released until",
+    "min_runtime": "Minimum length (minutes)",
+    "languages": "Original language",
+    "exclude_watched": "Skip films I've watched",
+    "blacklist_titles": "Never include",
+    "enabled": "Show in Stremio",
+    "position": "Order in the addon",
+    "focus": "Extra instruction for every refresh",
+    "weekday_focus": "Extra instruction per weekday",
+    "categories": "Categories to mix",
+    "anchors": "Example films (taste)",
+    "history_prompt_limit": "Recent films named to the AI",
+    "watched_prompt_limit": "Watched films named to the AI",
+    "max_prompt_chars": "Maximum request length (characters)",
+    "blacklist_tmdb_ids": "Never include (TMDB ids)",
+    "franchise_denylist": "Exclude franchises",
+    "excluded_genre_ids": "Exclude genres (TMDB genre ids)",
+    "max_per_collection": "Most films per franchise",
+    "director_cap": "Most films per director",
+    "decade_min": "Minimum films per decade",
+    "category_min": "Minimum films per category",
+    "overgenerate_factor": "Extra suggestions to ask for",
+    "history_window_runs": "Don't repeat films from the last … lists",
+    "history_mode": "When new films run out",
+    "on_shortfall": "If the list comes up short",
+    "min_accept": "Smallest list still published",
+    "max_model_calls_per_run": "Most AI requests per refresh",
+    "max_runs_per_day": "Most refreshes per day",
+    "model": "AI model",
+    "temperature": "Creativity (temperature)",
+    "max_tokens": "Maximum response length (tokens)",
+    "timeout_s": "AI request timeout (seconds)",
+}
+
+HELP = {
+    "prompt": "Describe it in your own words: the mood, genres, era, anything. The list size, your rules "
+    "below and recently shown films are added for you.",
+    "target_count": "Up to 250.",
+    "min_vote_average": "TMDB rating, 0 to 10. Empty: any.",
+    "min_vote_count": "Leaves out obscure films with only a handful of ratings. Empty: any.",
+    "year_min": "Empty: any year.",
+    "year_max": "Empty: any year.",
+    "min_runtime": "Empty: any length.",
+    "languages": "Language codes, one per line (en, fr, ja …). Empty: any language.",
+    "exclude_watched": "Needs an MDBList key in the server settings.",
+    "blacklist_titles": "One title per line, optionally with the year: Title (1999).",
+    "enabled": "Off keeps the catalog but hides it from the addon.",
+    "position": "Lower numbers come first.",
+    "focus": "Added to the description on every refresh.",
+    "weekday_focus": "YAML, e.g. friday: something light",
+    "categories": "One per line. Shuffled on every refresh to vary the picks.",
+    "anchors": "One title per line: films that show the taste you want.",
+    "franchise_denylist": "YAML with collections, companies, keywords or title_patterns.",
+    "decade_min": "YAML, e.g. 1990: 5",
+    "category_min": "YAML, e.g. alpha: 10",
+    "history_mode": "strict: never repeat; relax: allow the oldest films back.",
+    "on_shortfall": "fail: keep the previous list; publish_partial: publish what was found.",
+    "model": "An OpenRouter model id. Empty: the server default.",
+}
+
+GROUP_TITLES = {
+    "Catalog": "General",
+    "Prompt variables": "Description extras",
+    "Exclusions": "Exclusions",
+    "Hard limits": "Rules",
+    "Selection": "Variety",
+    "Run shape": "Refresh behaviour",
+    "Model": "AI model",
+    OTHER_GROUP: "Other",
+}
+
+
+def label_of(name: str) -> str:
+    return LABELS.get(name, name.replace("_", " ").capitalize())
+
+
+def help_of(spec: "FieldSpec") -> str:
+    text = HELP.get(spec.name)
+    if text:
+        return text
+    if spec.minimum is not None and spec.maximum is not None:
+        return f"{_num_text(spec.minimum)} to {_num_text(spec.maximum)}."
+    if spec.kind == "lines":
+        return "One per line."
+    if spec.kind == "yaml":
+        return "YAML."
+    return ""
+
+
+def basic_fields() -> list[FieldSpec]:
+    by_name = {s.name: s for s in editor_fields()}
+    return [by_name[n] for n in BASIC_FIELDS if n in by_name]
+
+
+def advanced_groups() -> list[tuple[str, list[FieldSpec]]]:
+    """Every field not shown up front, grouped (the schedule has its own widget)."""
+    out = []
+    for group, specs in grouped_fields():
+        rest = [s for s in specs if s.name not in BASIC_FIELDS and s.name != "schedule"]
+        if rest:
+            out.append((GROUP_TITLES.get(group, group), rest))
+    return out
+
+
+# --- schedule: "Manually / Every day at / Every week on / Custom" instead of cron
+
+SCHEDULE_MODES = ("manual", "daily", "weekly", "custom")
+WEEKDAY_NAMES = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")  # cron 0-6
+_HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+
+def _simple_cron(cron: str) -> Optional[tuple[str, int, int, Optional[int]]]:
+    """(mode, hour, minute, weekday) for 'M H * * *' and 'M H * * D'; None for anything else."""
+    parts = cron.split()
+    if len(parts) != 5 or parts[2:4] != ["*", "*"] or not (parts[0].isdigit() and parts[1].isdigit()):
+        return None
+    minute, hour = int(parts[0]), int(parts[1])
+    if minute > 59 or hour > 23:
+        return None
+    if parts[4] == "*":
+        return "daily", hour, minute, None
+    if parts[4].isdigit() and int(parts[4]) <= 7:
+        return "weekly", hour, minute, int(parts[4]) % 7
+    return None
+
+
+def schedule_values(schedule: Any) -> dict[str, str]:
+    """The schedule widget's values for a stored ``schedule``."""
+    out = {"sched_mode": "manual", "sched_time": "06:00", "sched_day": "5", "sched_tz": "", "sched_cron": ""}
+    if not isinstance(schedule, Mapping) or not isinstance(schedule.get("cron"), str):
+        if schedule:
+            out["sched_mode"] = "custom"
+            out["sched_cron"] = to_yaml(schedule).strip()
+        return out
+    out["sched_tz"] = str(schedule.get("timezone") or "UTC")
+    simple = _simple_cron(schedule["cron"])
+    if simple is None:
+        out["sched_mode"], out["sched_cron"] = "custom", schedule["cron"]
+        return out
+    mode, hour, minute, day = simple
+    out["sched_mode"], out["sched_time"] = mode, f"{hour:02d}:{minute:02d}"
+    if day is not None:
+        out["sched_day"] = str(day)
+    return out
+
+
+def schedule_from_form(form: Mapping[str, Optional[str]], base: Any) -> Any:
+    """The ``schedule`` a submitted widget describes (``_MISSING`` for "manually")."""
+    mode = (form.get("sched_mode") or "manual").strip()
+    if mode not in SCHEDULE_MODES:
+        raise DefinitionError("refresh: choose manually, every day, every week or custom")
+    if mode == "manual":
+        return _MISSING
+    tz = (form.get("sched_tz") or "").strip() or "UTC"
+    if mode == "custom":
+        cron = " ".join((form.get("sched_cron") or "").split())
+        if not cron:
+            raise DefinitionError("refresh: enter a cron expression, e.g. 0 6 * * *")
+    else:
+        m = _HHMM.match((form.get("sched_time") or "").strip())
+        if not m:
+            raise DefinitionError("refresh: enter a time like 06:00")
+        hour, minute = int(m.group(1)), int(m.group(2))
+        day = "*"
+        if mode == "weekly":
+            raw = (form.get("sched_day") or "").strip()
+            if not raw.isdigit() or int(raw) > 6:
+                raise DefinitionError("refresh: choose a weekday")
+            day = raw
+        cron = f"{minute} {hour} * * {day}"
+    value = {"cron": cron, "timezone": tz}
+    # Unchanged in meaning: keep the stored value exactly (spelling, and an omitted timezone).
+    if isinstance(base, Mapping) and isinstance(base.get("cron"), str):
+        same_tz = str(base.get("timezone") or "UTC") == tz
+        same_cron = " ".join(base["cron"].split()) == cron or (
+            mode != "custom" and _simple_cron(base["cron"]) == _simple_cron(cron)
+        )
+        if same_tz and same_cron:
+            return dict(base)
+    return value
+
+
+def catalog_id_for(name: str, taken: set[str]) -> str:
+    """A new catalog's id, from its name: lowercase words joined by '_', unique."""
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    base = "_".join(words)[:48].strip("_") or "catalog"
+    candidate, n = base, 2
+    while candidate in taken:
+        candidate, n = f"{base}_{n}", n + 1
+    return candidate
+
+
+def taken_catalog_ids(db_path: Optional[str] = None) -> set[str]:
+    with db.session(db_path) as conn:
+        return {r[0] for r in conn.execute("SELECT catalog_id FROM catalog_defs")}
