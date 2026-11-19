@@ -67,7 +67,6 @@
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <button type="submit" class="small" {{ "disabled" if c.state != "enabled" or busy else "" }} title="Ask the AI now and publish a new version">{{ icon("play") }}Run now</button>
       </form>
-      <span class="tool-sep" aria-hidden="true"></span>
       <a class="icon-btn" href="{{ href }}" title="Edit" aria-label="Edit {{ c.name }}">{{ icon("edit") }}</a>
       <form method="post" action="{{ href }}/state" class="inline" data-confirm-ok="Delete" data-confirm="Delete “{{ c.name }}”? It disappears from your apps.">
         <input type="hidden" name="csrf" value="{{ csrf }}">
