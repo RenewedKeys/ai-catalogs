@@ -460,7 +460,7 @@ button.small .ico, .button.small .ico { width: 14px; height: 14px; }
 .cat-meta .ico { width: 13px; height: 13px; }
 .cat-meta.faint-row { color: var(--faint); font-size: 12.5px; }
 .cat-actions { display: flex; align-items: center; gap: 6px; }
-.tool-sep { width: 1px; height: 22px; background: var(--line-strong); margin: 0 4px; }
+.cat-actions .icon-btn:first-of-type { margin-left: 2px; }
 .chip { padding: 2px 9px; font-size: 11.5px; }
 
 /* ---- catalog page: head, side menu, panels */
