@@ -1,5 +1,5 @@
 /* AI Catalogs editor. Dark only. No inline styles anywhere (CSP). */
-/* Midnight indigo with a soft violet sunrise at the top: dark and calm without being pure black. */
+/* Midnight indigo with a soft violet glow at the top: dark and calm without being pure black. */
 :root {
   --bg: #0b1024;
   --surface: #111836;
@@ -28,7 +28,7 @@
 }
 
 * { box-sizing: border-box; }
-/* The backdrop lives on the root so the faint rays (body::before) can sit between it and the page. */
+/* A soft violet glow at the top fading into deep indigo. */
 html {
   min-height: 100%;
   background:
@@ -47,12 +47,6 @@ body {
   font: 14.5px/1.55 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-body::before {  /* sunburst: thin rays fanning out from above the header, fading out quickly */
-  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background: repeating-conic-gradient(from 0deg at 50% -12%, rgba(170, 160, 255, 0.045) 0deg 2.5deg, transparent 2.5deg 9deg);
-  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 0%, #000 0%, transparent 72%);
-  mask-image: radial-gradient(ellipse 75% 65% at 50% 0%, #000 0%, transparent 72%);
-}
 a { color: #b3a9ff; text-decoration: none; }
 a:hover { color: #c9c2ff; }
 h1, h2, h3 { margin: 0; letter-spacing: -0.01em; }
@@ -66,7 +60,7 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 .top {
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 28px;
+  height: 64px; padding: 0 28px;
   background: rgba(11, 17, 40, 0.66);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
@@ -264,7 +258,7 @@ details.danger-zone p { margin: 10px 0; color: var(--muted); font-size: 14px; }
 
 @media (max-width: 720px) {
   main { padding: 22px 16px 120px; }
-  .top { padding: 12px 16px; }
+  .top { height: 58px; padding: 0 16px; }
   .field { grid-template-columns: 1fr; }
   .field .help { grid-column: 1; }
   .field > label { padding-top: 0; }
@@ -386,6 +380,10 @@ button.small .ico, .button.small .ico { width: 14px; height: 14px; }
   padding: 11px 14px; cursor: pointer; font-size: 14px;
 }
 .row-item.running { grid-template-columns: 28px 120px 1fr; cursor: default; }
+/* Fixed columns from the right, so a row without a button (or time) keeps its arrow at the edge. */
+.row-item > summary > .chev { grid-column: -2 / -1; }
+.row-item > summary > .button { grid-column: -3 / -2; }
+.row-item > summary > .row-when { grid-column: -4 / -3; }
 .row-item > summary::-webkit-details-marker { display: none; }
 .row-item > summary:hover { background: rgba(255,255,255,.025); }
 .row-item[open] > summary { background: rgba(124,108,255,.06); }
@@ -409,11 +407,19 @@ button.small .ico, .button.small .ico { width: 14px; height: 14px; }
 .notice.flash { transition: opacity .5s ease, transform .5s ease; }
 .notice.flash.gone { opacity: 0; transform: translateY(-6px); }
 @media (max-width: 720px) {
-  .row-item > summary { grid-template-columns: 28px 1fr auto 16px; }
-  .row-item > summary .row-kind, .row-item > summary .row-when { display: none; }
-  #version-rows .row-item > summary { grid-template-columns: 1fr auto 16px; }
-  #version-rows .row-item > summary .row-kind { display: inline; }
-  .row-body { padding-left: 16px; }
+  /* Phones: what happened on the first line, when under it; badge/icon on the left, button and arrow on the right. */
+  .row-item > summary, #version-rows .row-item > summary {
+    grid-template-columns: auto minmax(0, 1fr) auto 10px; grid-template-rows: auto auto; gap: 2px 10px; padding: 12px 14px;
+  }
+  .row-item > summary > .row-icon, #version-rows .row-item > summary > .row-kind { grid-column: 1; grid-row: 1 / 3; }
+  .run-row > summary > .row-kind { display: none; }
+  .row-item > summary > .row-main { grid-column: 2; grid-row: 1; white-space: normal; }
+  .row-item > summary > .row-when { grid-column: 2; grid-row: 2; display: block; font-size: 12.5px; }
+  .row-item > summary > .button { grid-column: 3; grid-row: 1 / 3; padding: 6px 11px; }
+  .row-item > summary > .chev { grid-column: 4; grid-row: 1 / 3; }
+  .row-item.running { grid-template-columns: 28px 1fr; }
+  .row-item.running .row-kind { display: none; }
+  .row-body, #version-rows .row-body { padding-left: 14px; padding-right: 14px; }
 }
 .run-error { margin: 6px 0 4px; }
 
@@ -494,7 +500,7 @@ button.small .ico, .button.small .ico { width: 14px; height: 14px; }
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; gap: 16px; }
   .sidenav {
-    position: sticky; top: 61px; z-index: 6; flex-direction: row; gap: 6px; overflow-x: auto; max-height: none;
+    position: sticky; top: 64px; z-index: 6; flex-direction: row; gap: 6px; overflow-x: auto; max-height: none;
     margin: 0 -16px; padding: 8px 16px; background: rgba(11, 17, 40, .88); backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--line); scrollbar-width: none;
   }
@@ -510,7 +516,7 @@ button.small .ico, .button.small .ico { width: 14px; height: 14px; }
   .addon-logo { width: 52px; height: 52px; }
   .cat { grid-template-columns: auto auto 1fr; padding: 14px 14px 14px 6px; }
   .cat-actions { grid-column: 1 / -1; flex-wrap: wrap; }
-  .page-head .row-start:last-child { width: 100%; }
+  .page-head .row-start + .row-start { width: 100%; }
 }
 
 /* ---- header and save bar on phones */
@@ -576,3 +582,18 @@ dialog.modal::backdrop { background: rgba(3, 6, 18, 0.62); backdrop-filter: blur
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 22px 18px; border-top: 1px solid var(--line); }
 @keyframes modal-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { dialog.modal[open] { animation: none; } }
+
+/* ---- phones: no zoom-on-focus, flush sticky tabs, lighter dashboard */
+@media (max-width: 720px) {
+  /* iOS zooms the page into any field under 16px and leaves it zoomed and shifted sideways. */
+  input[type=text], input:not([type]), input[type=password], input[type=time], select, textarea, textarea.big { font-size: 16px; }
+  .sidenav { top: 58px; }
+  .addon-logo { display: none; }   /* the header already shows the logo */
+  .addon-bar { padding: 18px; }
+  .cat { grid-template-columns: auto auto minmax(0, 1fr); align-items: start; }
+  .cat .grip { margin-top: 10px; }
+  .cat-actions { padding-top: 4px; }
+  .card { padding: 18px; }
+  .segmented { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 2px; }
+  .segmented label { text-align: center; }
+}
