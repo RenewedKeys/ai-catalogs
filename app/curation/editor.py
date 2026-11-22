@@ -831,31 +831,57 @@ def advanced_groups() -> list[tuple[str, list[FieldSpec]]]:
     return list(out.items())
 
 
-# --- schedule: "Manually / Every day at / Every week on / Custom" instead of cron
+# --- schedule: "Manually / Every day / Every week / Custom (pick days)" instead of cron
 
 SCHEDULE_MODES = ("manual", "daily", "weekly", "custom")
 WEEKDAY_NAMES = ("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")  # cron 0-6
+WEEKDAY_SHORT = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
 
-def _simple_cron(cron: str) -> Optional[tuple[str, int, int, Optional[int]]]:
-    """(mode, hour, minute, weekday) for 'M H * * *' and 'M H * * D'; None for anything else."""
+def _cron_days(field: str) -> Optional[frozenset[int]]:
+    """The weekdays (0 = Sunday) of a plain day-of-week field: '*', '5', '1-5', '1,3,5', '7'."""
+    if field == "*":
+        return frozenset(range(7))
+    days: set[int] = set()
+    for part in field.split(","):
+        lo, sep, hi = part.partition("-")
+        if not lo.isdigit() or (sep and not hi.isdigit()):
+            return None
+        a, b = int(lo), int(hi) if sep else int(lo)
+        if a > 7 or b > 7 or a > b:
+            return None
+        days.update(d % 7 for d in range(a, b + 1))
+    return frozenset(days) or None
+
+
+def _simple_cron(cron: str) -> Optional[tuple[str, int, int, frozenset[int]]]:
+    """(mode, hour, minute, weekdays) for 'M H * * <days>'; None for anything else.
+    Every day is 'daily', one day 'weekly', any other set of days 'custom'."""
     parts = cron.split()
     if len(parts) != 5 or parts[2:4] != ["*", "*"] or not (parts[0].isdigit() and parts[1].isdigit()):
         return None
     minute, hour = int(parts[0]), int(parts[1])
-    if minute > 59 or hour > 23:
+    days = _cron_days(parts[4])
+    if minute > 59 or hour > 23 or days is None:
         return None
-    if parts[4] == "*":
-        return "daily", hour, minute, None
-    if parts[4].isdigit() and int(parts[4]) <= 7:
-        return "weekly", hour, minute, int(parts[4]) % 7
-    return None
+    mode = "daily" if len(days) == 7 else "weekly" if len(days) == 1 else "custom"
+    return mode, hour, minute, days
 
 
 def clock(hour: int, minute: int) -> str:
     """12-hour time the owner reads: (6, 0) -> '6:00 a.m.', (0, 5) -> '12:05 a.m.', (12, 0) -> '12:00 p.m.'."""
     return f"{(hour % 12) or 12}:{minute:02d} {'a.m.' if hour < 12 else 'p.m.'}"
+
+
+def days_label(days: frozenset[int]) -> str:
+    """{1, 3, 5} -> 'Mon, Wed, Fri'; Monday to Friday -> 'Weekdays'; Saturday and Sunday -> 'Weekends'."""
+    if days == frozenset(range(1, 6)):
+        return "Weekdays"
+    if days == frozenset({0, 6}):
+        return "Weekends"
+    order = sorted(days, key=lambda d: (d + 6) % 7)  # Monday first
+    return ", ".join(WEEKDAY_SHORT[d] for d in order)
 
 
 def schedule_label(schedule: Any) -> str:
@@ -869,14 +895,17 @@ def schedule_label(schedule: Any) -> str:
     )
     if simple is None:
         return "Custom schedule"
-    mode, hour, minute, day = simple
+    mode, hour, minute, days = simple
     if mode == "daily":
         return f"Every day at {clock(hour, minute)}"
-    return f"Every {WEEKDAY_NAMES[day or 0]} at {clock(hour, minute)}"
+    if mode == "weekly":
+        return f"Every {WEEKDAY_NAMES[min(days)]} at {clock(hour, minute)}"
+    return f"{days_label(days)} at {clock(hour, minute)}"
 
 
 def schedule_values(schedule: Any) -> dict[str, str]:
-    """The schedule widget's values for a stored ``schedule``."""
+    """The schedule widget's values for a stored ``schedule``. ``sched_cron`` is set only for a
+    schedule the day picker cannot show (written in the file); it is kept unless replaced."""
     out = {"sched_mode": "manual", "sched_time": "06:00", "sched_day": "5", "sched_tz": "", "sched_cron": ""}
     if not isinstance(schedule, Mapping) or not isinstance(schedule.get("cron"), str):
         if schedule:
@@ -888,10 +917,12 @@ def schedule_values(schedule: Any) -> dict[str, str]:
     if simple is None:
         out["sched_mode"], out["sched_cron"] = "custom", schedule["cron"]
         return out
-    mode, hour, minute, day = simple
+    mode, hour, minute, days = simple
     out["sched_mode"], out["sched_time"] = mode, f"{hour:02d}:{minute:02d}"
-    if day is not None:
-        out["sched_day"] = str(day)
+    if mode == "weekly":
+        out["sched_day"] = str(min(days))
+    if mode == "custom":
+        out.update({f"sched_d{d}": "on" for d in days})
     return out
 
 
@@ -903,10 +934,12 @@ def schedule_from_form(form: Mapping[str, Optional[str]], base: Any) -> Any:
     if mode == "manual":
         return _MISSING
     tz = (form.get("sched_tz") or "").strip() or server_timezone_name()
-    if mode == "custom":
-        cron = " ".join((form.get("sched_cron") or "").split())
-        if not cron:
-            raise DefinitionError("refresh: enter a cron expression, e.g. 0 6 * * *")
+    picked = [d for d in range(7) if form.get(f"sched_d{d}")]
+    advanced = " ".join((form.get("sched_cron") or "").split())
+    if mode == "custom" and not picked:
+        if not advanced:
+            raise DefinitionError("refresh: pick at least one day")
+        cron = advanced  # a schedule written in the file, left as it is
     else:
         m = _HHMM.match((form.get("sched_time") or "").strip())
         if not m:
@@ -918,14 +951,15 @@ def schedule_from_form(form: Mapping[str, Optional[str]], base: Any) -> Any:
             if not raw.isdigit() or int(raw) > 6:
                 raise DefinitionError("refresh: choose a weekday")
             day = raw
+        elif mode == "custom" and len(picked) < 7:
+            day = ",".join(map(str, picked))
         cron = f"{minute} {hour} * * {day}"
     value = {"cron": cron, "timezone": tz}
     # Unchanged in meaning: keep the stored value exactly (spelling, and an omitted timezone).
     if isinstance(base, Mapping) and isinstance(base.get("cron"), str):
         same_tz = str(base.get("timezone") or "UTC") == tz
-        same_cron = " ".join(base["cron"].split()) == cron or (
-            mode != "custom" and _simple_cron(base["cron"]) == _simple_cron(cron)
-        )
+        old = _simple_cron(base["cron"])
+        same_cron = " ".join(base["cron"].split()) == cron or (old is not None and old == _simple_cron(cron))
         if same_tz and same_cron:
             return dict(base)
     return value

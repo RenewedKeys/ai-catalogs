@@ -209,7 +209,13 @@ input[type=checkbox].switch:checked::after { transform: translateX(20px); }
 .sched-detail { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
 .sched-detail[hidden] { display: none; }
 .sched-detail label { color: var(--muted); font-size: 14px; }
-.sched-detail input[name=sched_cron] { width: 220px; }
+.day-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.day-picks label { cursor: pointer; }
+.day-picks input { position: absolute; opacity: 0; pointer-events: none; }
+.day-picks span { display: inline-block; min-width: 52px; text-align: center; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--field); color: var(--muted); font-weight: 600; font-size: 14px; }
+.day-picks input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; }
+.day-picks input:focus-visible + span { box-shadow: 0 0 0 3px var(--accent-soft); }
+.sched-detail .help[data-advanced-note] { flex-basis: 100%; margin: 0; }
 
 /* sticky save bar */
 .savebar {

@@ -985,6 +985,26 @@ def test_plain_description_previews_with_list_size_and_rules(client):
             {"cron": "0 18 * * 5", "timezone": "UTC"},
         ),
         (
+            {
+                "sched_mode": "custom",
+                "sched_d1": "on",
+                "sched_d3": "on",
+                "sched_d5": "on",
+                "sched_time": "07:15",
+                "sched_tz": "UTC",
+            },
+            {"cron": "15 7 * * 1,3,5", "timezone": "UTC"},
+        ),
+        (
+            {
+                "sched_mode": "custom",
+                **{f"sched_d{d}": "on" for d in range(7)},
+                "sched_time": "06:00",
+                "sched_tz": "UTC",
+            },
+            {"cron": "0 6 * * *", "timezone": "UTC"},
+        ),
+        (  # a schedule written in the file stays while no day is picked
             {"sched_mode": "custom", "sched_cron": "0  */6 * * *", "sched_tz": "UTC"},
             {"cron": "0 */6 * * *", "timezone": "UTC"},
         ),
@@ -1006,6 +1026,8 @@ def test_refresh_widget_builds_the_schedule(client, widget, expected):
         ({"cron": "00 06 * * *", "timezone": "UTC"}, "daily"),
         ({"cron": "15 20 * * 7", "timezone": "Asia/Tokyo"}, "weekly"),
         ({"cron": "0 6 1 * *", "timezone": "UTC"}, "custom"),
+        ({"cron": "30 6 * * 1-5", "timezone": "UTC"}, "custom"),
+        ({"cron": "0 9 * * 6,0", "timezone": "UTC"}, "custom"),
     ],
 )
 def test_refresh_widget_keeps_a_stored_schedule_exactly(stored, mode):
@@ -1019,7 +1041,8 @@ def test_refresh_widget_keeps_a_stored_schedule_exactly(stored, mode):
     [
         ({"sched_mode": "daily", "sched_time": "25:00"}, "time like 06:00"),
         ({"sched_mode": "weekly", "sched_time": "06:00", "sched_day": "9"}, "choose a weekday"),
-        ({"sched_mode": "custom", "sched_cron": ""}, "cron expression"),
+        ({"sched_mode": "custom", "sched_cron": ""}, "pick at least one day"),
+        ({"sched_mode": "custom", "sched_d2": "on", "sched_time": "nope"}, "time like 06:00"),
         ({"sched_mode": "hourly"}, "choose manually"),
     ],
 )
@@ -1334,6 +1357,9 @@ def test_twelve_hour_clock_and_schedule_labels():
     assert editor.schedule_label({"cron": "0 6 * * *", "timezone": "UTC"}) == "Every day at 6:00 a.m."
     assert editor.schedule_label({"cron": "30 18 * * 5", "timezone": "UTC"}) == "Every Friday at 6:30 p.m."
     assert editor.schedule_label({"cron": "*/15 * * * *", "timezone": "UTC"}) == "Custom schedule"
+    assert editor.schedule_label({"cron": "0 7 * * 0,3,5", "timezone": "UTC"}) == "Wed, Fri, Sun at 7:00 a.m."
+    assert editor.schedule_label({"cron": "30 6 * * 1-5", "timezone": "UTC"}) == "Weekdays at 6:30 a.m."
+    assert editor.schedule_label({"cron": "0 10 * * 6,7", "timezone": "UTC"}) == "Weekends at 10:00 a.m."
 
 
 def test_relative_times():
@@ -1487,3 +1513,26 @@ def test_signed_out_page_loads_are_still_refused(proxy_app):
     c = TestClient(proxy_app, follow_redirects=False)
     for path in ["/configure/catalogs/alpha_list/refresh", "/configure/catalogs/alpha_list/status.json"]:
         assert c.get(path, headers=PAGE_LOAD).status_code == 403
+
+
+def test_preview_keeps_the_refresh_choice(client):
+    r = client.post(
+        "/configure/new",
+        data={
+            "csrf": token(client),
+            "mode": "form",
+            "name": "Alpha",
+            "prompt": PROMPT,
+            "action": "validate",
+            "sched_mode": "custom",
+            "sched_d2": "on",
+            "sched_d4": "on",
+            "sched_time": "21:30",
+            "sched_tz": "UTC",
+        },
+    )
+    assert r.status_code == 200, r.text[:400]
+    assert 'name="sched_mode" value="custom" checked' in r.text
+    assert 'name="sched_d2" value="on" checked' in r.text and 'name="sched_d4" value="on" checked' in r.text
+    assert 'name="sched_d1" value="on" >' in r.text
+    assert 'value="21:30"' in r.text

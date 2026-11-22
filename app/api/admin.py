@@ -902,6 +902,7 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
             label_of=editor.label_of,
             help_of=editor.help_of,
             weekdays=list(enumerate(editor.WEEKDAY_NAMES)),
+            weekday_picks=[(d, editor.WEEKDAY_SHORT[d]) for d in (1, 2, 3, 4, 5, 6, 0)],  # Monday first
             mdblist_ready=bool(settings.MDBLIST_API_KEY),
             option_label=editor.option_label,
             current_json={n: json.dumps(definition.get(n)) for n in editor.WIDGETS},
@@ -971,6 +972,7 @@ def create_admin_app(tmdb_client_factory: Optional[Callable[[], TMDBClient]] = N
         action = form.get("action", "validate")
         base = catalog["definition"] if catalog else {}
         values = {s.name: form.get(s.name, "") for s in editor.editor_fields()}
+        values.update({k: v for k, v in form.items() if k.startswith("sched_")})  # the refresh widget
         yaml_text = form.get("yaml", "")
         keep = dict(values=values) if mode == "form" else dict(yaml_text=yaml_text)
         try:
