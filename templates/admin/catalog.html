@@ -188,24 +188,32 @@
           <label><input type="radio" name="sched_mode" value="{{ m }}" {{ "checked" if values.sched_mode == m else "" }}><span>{{ text }}</span></label>
           {% endfor %}
         </div>
-        <div class="sched-detail" data-sched="daily weekly" {{ "hidden" if values.sched_mode not in ("daily", "weekly") else "" }}>
+        <div class="sched-detail" data-sched="custom" {{ "hidden" if values.sched_mode != "custom" else "" }}>
+          <div class="day-picks" role="group" aria-label="Days">
+            {% for i, d in weekday_picks %}
+            <label><input type="checkbox" name="sched_d{{ i }}" value="on" {{ "checked" if values.get("sched_d" ~ i) else "" }}><span>{{ d }}</span></label>
+            {% endfor %}
+          </div>
+          {% if values.sched_cron %}
+          <input type="hidden" name="sched_cron" value="{{ values.sched_cron }}">
+          <span class="help" data-advanced-note>This catalog uses a schedule written in its file ({{ values.sched_cron }}). It stays as it is until you pick days.</span>
+          {% endif %}
+        </div>
+        <div class="sched-detail" data-sched="daily weekly custom" {{ "hidden" if values.sched_mode not in ("daily", "weekly", "custom") else "" }}>
           <span data-sched="weekly" {{ "hidden" if values.sched_mode != "weekly" else "" }}>
             <select name="sched_day" aria-label="Day">
               {% for i, d in weekdays %}<option value="{{ i }}" {{ "selected" if values.sched_day == i|string else "" }}>{{ d }}</option>{% endfor %}
             </select>
           </span>
           <label for="sched-time">at</label>
-          <input id="sched-time" type="time" name="sched_time" value="{{ values.sched_time }}" class="short">
-        </div>
-        <div class="sched-detail" data-sched="custom" {{ "hidden" if values.sched_mode != "custom" else "" }}>
-          <input name="sched_cron" value="{{ values.sched_cron }}" class="mono" placeholder="0 6 * * *" aria-label="Cron expression">
+          <input id="sched-time" type="time" name="sched_time" value="{{ values.sched_time or "06:00" }}" class="short">
         </div>
         <div class="sched-detail" data-sched="daily weekly custom" {{ "hidden" if values.sched_mode == "manual" else "" }}>
           <label for="sched-tz">time zone</label>
           <input id="sched-tz" name="sched_tz" value="{{ values.sched_tz }}" placeholder="UTC" class="short" data-autotz data-tz-picker>
         </div>
       </div>
-      <span class="help">How often the AI makes a new version of this catalog. Manually: only when you press Run now. Tip: start on Manually, use Test run until you like the results, then pick a schedule.</span>
+      <span class="help">How often the AI makes a new version of this catalog. Manually: only when you press Run now. Custom: pick the days, then the time. Tip: start on Manually, use Test run until you like the results, then pick a schedule.</span>
     </div>
     {% if by.enabled %}{{ field(by.enabled) }}{% endif %}
   </section>
